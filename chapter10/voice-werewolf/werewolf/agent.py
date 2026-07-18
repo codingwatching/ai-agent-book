@@ -7,6 +7,11 @@
   身份」，预言家才会收到「查验结果」，公开发言才会推给所有人。
 - Agent 每次思考（发言 / 投票 / 用技能）时，只能看到自己 memory 里的内容，
   因此不可能「偷看」到本不该看到的信息。这就是信息权限控制的落点。
+
+离线（--offline / --mock）策略：当没有 OpenAI Key、或想零成本可复现地跑完整一局时，
+Agent 用一套**规则驱动**的决策代替 LLM。关键在于：离线策略同样**只读自己的 memory**
+（不碰其他 Agent 的私有上下文），因此信息权限控制这一教学要点在离线模式下依然成立、
+依然可被审计校验。
 """
 
 import json
@@ -14,33 +19,39 @@ import os
 import re
 from typing import List, Optional
 
-from openai import OpenAI
-
 from .roles import Role, ROLE_STRATEGY, faction_of
 
 
 # 全局唯一的 OpenAI 客户端。读取 OPENAI_API_KEY；模型默认 gpt-4o-mini。
 # 注意：按实验约束，只用 OpenAI，不用 OPENROUTER/ANTHROPIC/DEEPSEEK/SILICONFLOW。
 _MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-_client: Optional[OpenAI] = None
+_client = None
 
 
-def get_client() -> OpenAI:
-    """返回全局共享的 OpenAI 客户端（懒加载，进程内单例）。"""
+def get_client():
+    """返回全局共享的 OpenAI 客户端（懒加载，进程内单例）。
+
+    仅在线模式（真实调用 LLM）才会用到；离线模式不导入 openai、不构造客户端。
+    """
     global _client
     if _client is None:
+        from openai import OpenAI  # 懒导入：离线模式无需安装 openai
         _client = OpenAI()  # 自动读取环境变量 OPENAI_API_KEY
     return _client
 
 
 class PlayerAgent:
-    """一个玩家 Agent，封装其身份、私有上下文与 LLM 调用。"""
+    """一个玩家 Agent，封装其身份、私有上下文与决策（LLM 或离线规则）。"""
 
-    def __init__(self, name: str, role: Role):
+    def __init__(self, name: str, role: Role, offline: bool = False, rng=None):
         self.name = name          # 玩家名，如 "P3"
         self.role = role          # 真实身份（只有本人和法官知道）
         self.faction = faction_of(role)
         self.alive = True
+        self.offline = offline    # True 时用规则策略代替 LLM（零成本、可复现）
+        # 离线策略的私有随机源（按玩家名种子化，保证可复现且各玩家独立）
+        import random as _random
+        self._rng = rng or _random.Random(hash(name) & 0xFFFF)
         # 私有上下文：这个 Agent「看得到」的全部信息。别的 Agent 无法访问。
         self.memory: List[str] = []
 
@@ -88,6 +99,8 @@ class PlayerAgent:
 
     def speak(self, players: List[str]) -> str:
         """白天公开发言。返回一段发言文本（公开信息）。"""
+        if self.offline:
+            return self._offline_speak(candidates=[p for p in players if p != self.name])
         instruction = (
             "现在轮到你在白天公开发言。请结合你掌握的信息，发表一段简短的发言"
             "（2~4 句话，60 字以内）。符合你的身份与策略。直接输出发言内容，不要加引号。"
@@ -100,6 +113,8 @@ class PlayerAgent:
 
         用 JSON 模式返回，鲁棒地解析出目标玩家名。
         """
+        if self.offline:
+            return self._offline_choose_target(candidates, allow_none)
         opt = "，也可以选择放弃（target 填 \"none\"）" if allow_none else ""
         instruction = (
             f"{prompt}\n候选玩家：{'、'.join(candidates)}{opt}。\n"
@@ -111,6 +126,8 @@ class PlayerAgent:
 
     def vote(self, candidates: List[str], players: List[str]) -> Optional[str]:
         """投票放逐。返回票投给谁（或弃票 none）。"""
+        if self.offline:
+            return self._offline_vote(candidates)
         instruction = (
             "现在是白天投票放逐环节。请根据全场发言与你的推理，投出你认为最可能是"
             "狼人的玩家。\n候选玩家：" + "、".join(candidates) + "。\n"
@@ -118,6 +135,78 @@ class PlayerAgent:
         )
         raw = self._chat(instruction, players, max_tokens=120, json_mode=True)
         return self._parse_target(raw, candidates, allow_none=True)
+
+    # ---------- 离线（规则）策略：只读自己的 memory，绝不访问他人上下文 ----------
+    def _known_teammates(self) -> set:
+        """狼人从自己的私有上下文里解析出队友名单（好人解析不到，返回空）。"""
+        mates = set()
+        for m in self.memory:
+            hit = re.search(r"狼人阵营的玩家是：([^（(]+)", m)
+            if hit:
+                mates |= set(re.findall(r"P\d+", hit.group(1)))
+        return mates
+
+    def _known_wolves(self) -> set:
+        """从自己的私有上下文里收集『已知是狼人』的玩家：预言家的查验结果 + 狼人的队友。
+
+        好人平民无从得知任何人身份 → 返回空集合，只能随机投票。这正是信息不对称。
+        """
+        known = set(self._known_teammates())
+        for m in self.memory:
+            hit = re.search(r"你查验了\s*(P\d+)，结果为【狼人】", m)
+            if hit:
+                known.add(hit.group(1))
+        return known
+
+    def _offline_vote(self, candidates: List[str]) -> Optional[str]:
+        """离线投票：优先投自己『确知的狼人』（预言家验人 / 狼人不投队友），否则随机。"""
+        if not candidates:
+            return None
+        if self.role == Role.WEREWOLF:
+            # 狼人：投一个非队友的好人，尽量隐藏自己
+            mates = self._known_teammates()
+            targets = [c for c in candidates if c not in mates] or candidates
+            return self._rng.choice(targets)
+        # 好人：预言家有验人结果就投确认的狼；其余平民只能随机（信息不对称的代价）
+        wolves = [c for c in candidates if c in self._known_wolves()]
+        if wolves:
+            return self._rng.choice(wolves)
+        return self._rng.choice(candidates)
+
+    def _offline_choose_target(self, candidates: List[str],
+                               allow_none: bool) -> Optional[str]:
+        """离线夜间选目标：狼人/预言家等必选场景优先选『已知狼人之外』的目标；
+        女巫解药/毒药等可放弃场景按概率决定。"""
+        if not candidates:
+            return None
+        if allow_none:
+            # 女巫用药：约一半概率行动（救/毒），使对局有变化又能收敛
+            if self._rng.random() < 0.5:
+                return None
+            return self._rng.choice(candidates)
+        if self.role == Role.SEER:
+            # 预言家：优先查验尚未确认身份的玩家（避免重复查验已知狼人）
+            unknown = [c for c in candidates if c not in self._known_wolves()]
+            return self._rng.choice(unknown or candidates)
+        if self.role == Role.WEREWOLF:
+            mates = self._known_teammates()
+            targets = [c for c in candidates if c not in mates] or candidates
+            return self._rng.choice(targets)
+        return self._rng.choice(candidates)
+
+    def _offline_speak(self, candidates: List[str]) -> str:
+        """离线发言：按角色生成一句符合身份、且不泄露私密信息的模板发言。"""
+        wolves = [c for c in candidates if c in self._known_wolves()]
+        suspect = self._rng.choice(candidates) if candidates else "大家"
+        if self.role == Role.SEER and wolves:
+            return f"我是预言家，昨晚查验到 {wolves[0]} 是狼人，请大家把票投给他。"
+        if self.role == Role.WEREWOLF:
+            return f"我是好人，从发言看 {suspect} 有点可疑，建议重点关注他。"
+        if self.role == Role.WITCH:
+            return f"我暂时观望，觉得 {suspect} 的发言站不住脚，先留意一下。"
+        if self.role == Role.SEER:
+            return "我还没有决定性的信息，先听大家发言，谨慎投票。"
+        return f"我是村民，没有夜间信息，只能靠推理，感觉 {suspect} 稍微可疑。"
 
     # ---------- 解析工具 ----------
     @staticmethod

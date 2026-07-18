@@ -66,3 +66,39 @@ def keyword_judge(text: str) -> Optional[str]:
                     return sentence.strip("：: ")
             return text
     return None
+
+
+def build_sources(n: int) -> List[Source]:
+    """
+    构造 n 个并行来源，供命令行 ``--agents N`` 动态调整并行 Agent 数量。
+
+    设计约束（保证演示始终可复现）：
+    - n == 10 时**原样返回** ``DEMO_SOURCES``，默认行为与之前完全一致；
+    - n >= 2 时始终包含两个"含答案且延迟相同"的源（geo-journal / forum-qa），
+      从而稳定触发命中、竞态与级联终止；
+    - 其余用无答案的填充源补齐；n 超过内置源数量时循环生成并加序号后缀。
+    """
+    if n < 1:
+        raise ValueError("并行 Agent 数量至少为 1")
+    if n == len(DEMO_SOURCES):
+        return list(DEMO_SOURCES)
+
+    answer_pool = [s for s in DEMO_SOURCES if s.holds_answer]
+    filler_pool = [s for s in DEMO_SOURCES if not s.holds_answer]
+    k_answer = min(len(answer_pool), 2 if n >= 2 else 1)
+    n_filler = n - k_answer
+
+    fillers: List[Source] = []
+    seen: dict = {}
+    for i in range(n_filler):
+        base = filler_pool[i % len(filler_pool)]
+        seen[base.name] = seen.get(base.name, 0) + 1
+        name = base.name if seen[base.name] == 1 else f"{base.name}-{seen[base.name]}"
+        fillers.append(Source(name, base.latency, base.content, False))
+
+    sources = fillers
+    # 把含答案的源插入到确定的位置（沿用默认布局：靠前但不在最前，便于观察并行推进）
+    for j, src in enumerate(answer_pool[:k_answer]):
+        pos = min(2 + 2 * j, len(sources))
+        sources.insert(pos, Source(src.name, src.latency, src.content, src.holds_answer))
+    return sources

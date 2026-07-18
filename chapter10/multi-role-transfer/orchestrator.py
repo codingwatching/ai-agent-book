@@ -52,16 +52,22 @@ class MultiRoleOrchestrator:
         model: str = "gpt-4o-mini",
         max_steps: int = 20,
         verbose: bool = True,
+        start_role: str = DEFAULT_ROLE,
     ):
+        if start_role not in ROLES:
+            raise ValueError(f"未知的起始角色 {start_role!r}，可选：{list(ROLES.keys())}")
         self.client = client
         self.model = model
         self.max_steps = max_steps
         self.verbose = verbose
 
         self.history: List[dict] = []          # 共享对话历史（不含 system）
-        self.current_role: str = DEFAULT_ROLE  # 当前控制权所在角色
+        self.current_role: str = start_role    # 当前控制权所在角色（可自定义起始角色）
         self.handoffs: List[Handoff] = []      # 记录移交链
         self._tool_call_counts: Dict[str, int] = {}  # 相同工具调用去重计数（防死循环）
+        # 分工记录：(role, kind, detail)，kind ∈ {"tool", "transfer", "final"}，
+        # 用于运行结束后打印「哪个角色做了什么」的分工总览。
+        self.activity: List[tuple] = []
 
     # -------------------------------------------------------------- 工具装配
     def _tools_for_current_role(self) -> List[dict]:
@@ -110,6 +116,7 @@ class MultiRoleOrchestrator:
         if not msg.tool_calls:
             content = msg.content or ""
             self.history.append({"role": "assistant", "content": content})
+            self.activity.append((self.current_role, "final", ""))
             self._log(f"{C.GREEN}└── [{self.current_role}] 最终回复:{C.RESET}\n{content}")
             return content
 
@@ -151,6 +158,7 @@ class MultiRoleOrchestrator:
                     self._log(f"{C.RED}└── transfer 被拒: 不能移交给自己 ({target}){C.RESET}")
                 elif target in ROLES:
                     pending_transfer = Handoff(self.current_role, target, reason)
+                    self.activity.append((self.current_role, "transfer", target))
                     result = f"已移交给 {target}。对方将继承完整对话历史并继续处理。"
                     self._log(
                         f"{C.MAGENTA}└── ⇢ transfer_to_agent: "
@@ -166,6 +174,7 @@ class MultiRoleOrchestrator:
                     result = f"工具 {name} 不存在。"
                 else:
                     result = impl(**args)
+                    self.activity.append((self.current_role, "tool", name))
                 # 防死循环：同一 (角色,工具,参数) 反复调用时给出纠偏提示
                 sig = f"{self.current_role}:{name}:{tc.function.arguments}"
                 self._tool_call_counts[sig] = self._tool_call_counts.get(sig, 0) + 1
@@ -218,3 +227,32 @@ class MultiRoleOrchestrator:
         for h in self.handoffs:
             chain.append(h.to_role)
         return " → ".join(chain)
+
+    def role_work_summary(self) -> str:
+        """
+        返回「哪个角色做了什么」的分工总览——按角色首次出场顺序，
+        列出每个角色实际调用过的专属工具，以及谁产出了最终回复。
+        这直接印证：同一段共享历史上，不同专业角色各司其职地接力完成任务。
+        """
+        order: List[str] = []
+        tools_by_role: Dict[str, List[str]] = {}
+        final_role: Optional[str] = None
+        for role, kind, detail in self.activity:
+            if role not in order:
+                order.append(role)
+                tools_by_role[role] = []
+            if kind == "tool" and detail not in tools_by_role[role]:
+                tools_by_role[role].append(detail)
+            elif kind == "final":
+                final_role = role
+        if not order:
+            return "（无角色活动记录）"
+        width = max(len(r) for r in order)
+        lines: List[str] = []
+        for role in order:
+            used = tools_by_role[role]
+            desc = "、".join(used) if used else "（仅路由/移交，未用专属工具）"
+            if role == final_role:
+                desc += "  ⇒ 产出最终回复"
+            lines.append(f"  {role.ljust(width)} : {desc}")
+        return "\n".join(lines)

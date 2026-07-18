@@ -50,11 +50,39 @@ cp env.example .env      # 填入 OPENAI_API_KEY
 python demo.py
 ```
 
+`python demo.py` 会先打印**四 Agent 协作的实时轨迹**（Manager 制定计划 → 调度
+Glossary → 逐章 Translation → Proofreading → 依报告决定修订），再打印各 Agent 的
+token 消耗与管理者模式 vs 单 Agent 的核心对比表。
+
 - 只使用 `OPENAI_API_KEY`。模型默认 `gpt-4o-mini`（成本低），可用 `OPENAI_MODEL`
   覆盖；如需自建/代理端点，设 `OPENAI_BASE_URL`。
 - 任务规模刻意很小（4 个短章节），一次运行成本约几百分之一美元。
-- `python demo.py --help` 查看可选参数（如 `--model` 临时换模型、`--skip-single`
-  只跑管理者模式）；不带参数运行与上文行为一致。
+- 不带任何参数运行与旧版行为完全一致。
+
+### 命令行参数（`python demo.py --help`）
+
+| 参数 | 作用 | 默认 |
+| --- | --- | --- |
+| `--dry-run` | **离线预演**：只画四 Agent 协作图、Manager 计划、编辑部术语与各 Agent 的 token 预算，**不调用任何 API、无需 Key** | 关闭 |
+| `--sample-dir DIR` | 待翻译书籍目录（读取其中 `*.md`，按文件名排序） | `sample_book/` |
+| `--out-dir DIR` | 产物根目录（其下再分 `orchestration/`、`single_agent/`） | `output/` |
+| `--source-lang LANG` / `--target-lang LANG` | 源 / 目标语言（仅影响提示词措辞） | `英文` / `中文` |
+| `--no-glossary` | 关闭 Glossary Agent（仅保留编辑部指定术语） | 启用 |
+| `--no-proofreading` | 关闭 Proofreading Agent 与 Manager 修订闭环 | 启用 |
+| `--model MODEL` | 临时覆盖模型（等价于设 `OPENAI_MODEL`） | `gpt-4o-mini` |
+| `--skip-single` | 只跑管理者模式，跳过单 Agent 对照组 | 关闭 |
+
+> 注意：内置的术语一致性 / 遵从率统计（`consistency.py`）针对 **英文→中文** 调校；
+> 改翻译方向仍可正常翻译，但该统计表意义有限。
+
+**无 Key / 离线快速查看架构**：
+
+```bash
+python demo.py --dry-run     # 打印四 Agent 协作图 + Manager 计划 + token 预算，不联网
+```
+
+该模式用 `tiktoken` 离线估算各 Agent 会读到的上下文规模，直观印证「Manager 上下文
+只随章节数加几行记录、与每章正文长度无关」，而单 Agent 的累积上下文随书长线性膨胀。
 
 ## token 统计口径
 

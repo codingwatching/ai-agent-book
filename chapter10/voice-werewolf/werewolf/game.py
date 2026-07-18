@@ -18,15 +18,40 @@ from .audit import AuditLog
 from .roles import Role, Faction
 
 
-def create_players(seed: int = 42) -> List[PlayerAgent]:
-    """创建一局 7 人游戏：2 狼人 + 1 预言家 + 1 女巫 + 3 村民（控成本）。
+def build_roles(players: int = 7, wolves: Optional[int] = None) -> List[Role]:
+    """按玩家总数推导身份组成：默认 7 人 = 2 狼人 + 1 预言家 + 1 女巫 + 3 村民。
 
-    身份随机洗牌后分配给 P1~P7，保证每局身份分布不同但可用 seed 复现。
+    - wolves 未指定时按 max(1, players // 3) 估算（7 人得 2 狼，与书中默认一致）。
+    - 4 人及以上配 1 预言家，5 人及以上再配 1 女巫，其余全为村民。
+    """
+    if players < 3:
+        raise ValueError("玩家总数至少为 3")
+    wolves = wolves if wolves is not None else max(1, players // 3)
+    seer = 1 if players >= 4 else 0
+    witch = 1 if players >= 5 else 0
+    villagers = players - wolves - seer - witch
+    if wolves < 1 or villagers < 0:
+        raise ValueError(
+            f"身份组成非法：{players} 人无法容纳 {wolves} 狼 + {seer} 预言家 + "
+            f"{witch} 女巫（剩余村民 {villagers}）。请调小 --wolves 或调大 --players。")
+    return ([Role.WEREWOLF] * wolves + [Role.SEER] * seer
+            + [Role.WITCH] * witch + [Role.VILLAGER] * villagers)
+
+
+def create_players(seed: int = 42, players: int = 7, wolves: Optional[int] = None,
+                   offline: bool = False) -> List[PlayerAgent]:
+    """创建一局游戏（默认 7 人：2 狼人 + 1 预言家 + 1 女巫 + 3 村民，控成本）。
+
+    身份随机洗牌后分配给 P1~Pn，保证每局身份分布不同但可用 seed 复现。
+    offline=True 时每个 Agent 用规则策略代替 LLM（零成本、可复现）；每个 Agent
+    还会拿到一个按 seed 与序号种子化的独立随机源，保证离线对局完全可复现。
     """
     rng = random.Random(seed)
-    roles = ([Role.WEREWOLF] * 2 + [Role.SEER] + [Role.WITCH] + [Role.VILLAGER] * 3)
+    roles = build_roles(players, wolves)
     rng.shuffle(roles)
-    return [PlayerAgent(f"P{i+1}", roles[i]) for i in range(len(roles))]
+    return [PlayerAgent(f"P{i+1}", roles[i], offline=offline,
+                        rng=random.Random(seed * 1000 + i))
+            for i in range(len(roles))]
 
 
 class Judge:

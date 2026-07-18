@@ -63,9 +63,34 @@ python demo.py
 `OPENAI_API_KEY`（必填）、`OPENAI_BASE_URL`（默认 `https://api.openai.com/v1`）、
 `OPENAI_MODEL`（默认 `gpt-4o-mini`）。
 
-也可用命令行参数临时覆盖（不传则行为与上面完全一致）：
-`python demo.py --task "..."`（自定义任务）、`--model gpt-4o`（临时换模型）；
-运行 `python demo.py --help` 查看说明。
+### 命令行参数
+
+所有参数均可选，不传则行为与最初版本完全一致（跑默认 `cagr` 场景）。运行
+`python demo.py --help` 查看完整中文说明。
+
+| 参数 | 作用 |
+|------|------|
+| `--list-roles` | **离线自检**：只打印角色花名册 + 内置场景后退出，**无需 API Key** |
+| `--scenario {cagr,solar,coding}` | 选内置场景（默认 `cagr`）；`coding` 会路由到 `coding` 角色真正跑代码 |
+| `--task "..."` | 自定义任务文本，覆盖 `--scenario` |
+| `--role {triage,research,coding,data_analysis,writing}` | 指定**起始角色**（别名 `--starting-role`，默认 `triage`） |
+| `--interactive` | **交互式多轮**：复用同一编排器，角色与共享历史跨轮保留 |
+| `--model gpt-4o` | 临时覆盖 `OPENAI_MODEL` |
+| `--max-steps 30` | 单条消息的最大 LLM 轮数硬上限（默认 20，防死循环） |
+
+例：
+
+```bash
+python demo.py --list-roles            # 离线看角色/场景清单，不调用 API
+python demo.py --scenario coding       # 路由到 coding 角色的场景
+python demo.py --task "帮我调研并总结…" # 自定义任务
+python demo.py --role research         # 从 research 角色起步
+python demo.py --interactive           # 交互式多轮，输入 exit 退出
+```
+
+三个内置场景（`SCENARIOS`）：`cagr`（默认，新能源汽车销量→CAGR→投资总结）、
+`solar`（同类链路换一组光伏装机数据）、`coding`（路由到 `coding` 角色用
+`execute_python` 真正跑斐波那契脚本，再由 `writing`/`triage` 收尾）。
 
 ## 演示说明
 
@@ -85,7 +110,9 @@ triage → research → data_analysis → writing
 - `writing` 综合**此前历史里**的销量数据与 CAGR，直接写出最终成稿。
 
 `writing` 从未自己检索或计算，却能引用准确的销量数字和增长率——
-这正是**共享上下文**的证据。运行结束会打印完整移交链、每次移交的 `from→to` 与 `reason`。
+这正是**共享上下文**的证据。运行结束会打印完整移交链、每次移交的 `from→to` 与 `reason`，
+以及**各角色分工总览**（谁调用了哪些专属工具、谁产出了最终回复），一眼看清
+「同一段历史上不同专业角色各司其职地接力」。
 
 > 注：真实 LLM 输出有随机性，某次运行的具体措辞/步数可能略有不同，但移交机制一致。
 

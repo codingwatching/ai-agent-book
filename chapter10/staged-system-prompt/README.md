@@ -43,6 +43,9 @@ cp env.example .env && vi .env         # 方式 B：写到 .env
 
 python demo.py
 
+# 离线查看三阶段配置（角色 / 系统提示词 / 工具集 / 转换信号），无需 API Key
+python demo.py --list-stages
+
 # 查看可选参数（不影响默认行为）
 python demo.py --help
 ```
@@ -52,8 +55,11 @@ python demo.py --help
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--task` | 整理下载文件夹的任务 | 覆盖交给 Agent 的用户任务 |
+| `--start-stage` | `requirements` | 从哪个阶段开始。选 `implementation` 会预置一份等价于需求澄清产物的已确认需求、直接从实现阶段起步，便于单独调试后两个阶段（`review` 依赖实现阶段的代码，不能作为起点） |
+| `--interactive` | 关 | 需求澄清阶段改由真人从标准输入回答 Agent 的提问（默认用 `simulated_user.py` 的模拟用户自动回答，可无人值守跑通全流程） |
 | `--max-revisions` | `3` | 审查阶段允许的最大回退次数，超过则强制结束演示 |
 | `--model` | 环境变量 `OPENAI_MODEL` | 覆盖使用的模型名 |
+| `--list-stages` | — | 离线打印三阶段配置后退出，不调用任何 API（适合无 Key 时先看清机制） |
 
 可配环境变量（见 `env.example`）：`OPENAI_API_KEY`（必填）、`OPENAI_BASE_URL`（默认官方）、
 `OPENAI_MODEL`（默认 `gpt-4o-mini`，便宜省钱）、`OPENAI_TEMPERATURE`（默认 0.3）。

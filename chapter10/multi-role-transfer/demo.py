@@ -1,12 +1,20 @@
 """
 demo.py —— 实验 10-2 演示入口：多角色转换 / transfer_to_agent
 
-一条命令即可运行：
+最简运行（一条命令，跑默认复合任务）：
     python demo.py
 
-演示一个需要【多次跨领域切换】的复合任务：
-    "查最新数据 → 用工具算指标 → 写成一段面向读者的话"
-预期出现 triage → research → data_analysis → writing → triage 的自主移交链。
+其它常用方式：
+    python demo.py --list-roles              # 离线：只打印角色花名册后退出（无需 API Key）
+    python demo.py --scenario coding         # 换一个内置场景（会路由到 coding 角色）
+    python demo.py --task "..."              # 自定义任务
+    python demo.py --role research            # 指定起始角色（默认 triage 前台分诊）
+    python demo.py --interactive             # 交互式多轮对话（角色与共享历史跨轮保留）
+    python demo.py --model gpt-4o --max-steps 30
+
+演示一个需要【多次跨领域切换】的复合任务，预期出现
+    triage → research → data_analysis → writing
+的自主移交链——每次移交都由当前角色自己判断并调用 transfer_to_agent 触发。
 """
 
 from __future__ import annotations
@@ -29,7 +37,10 @@ except ImportError:
     pass
 
 
-# 复合任务：故意跨「检索 + 计算 + 写作」三个领域，逼出多次自主移交。
+# ---------------------------------------------------------------------------
+# 内置场景：每个都刻意跨多个领域，以逼出多次自主移交。
+# 键名用于 --scenario；值为 (任务文本, 一句话说明)。
+# ---------------------------------------------------------------------------
 COMPOSITE_TASK = (
     "我在准备一份给投资人看的材料。请帮我：\n"
     "1) 查一下中国 2021、2022、2023 三年的新能源汽车销量；\n"
@@ -37,9 +48,28 @@ COMPOSITE_TASK = (
     "3) 把数据和这个增长率结论，写成一段面向投资人的、不超过 120 字的中文总结。"
 )
 
+SCENARIOS: dict[str, tuple[str, str]] = {
+    "cagr": (
+        COMPOSITE_TASK,
+        "默认场景。跨检索/计算/写作三领域：查销量 → 算 CAGR → 写投资总结，"
+        "预期链路 triage → research → data_analysis → writing。",
+    ),
+    "solar": (
+        "帮我查一下中国 2021、2022、2023 三年的光伏新增装机量，"
+        "算出这三年的年均复合增长率(CAGR)，再写成一句话面向读者的结论。",
+        "另一组数据的同类链路（research → data_analysis → writing），验证机制而非记住答案。",
+    ),
+    "coding": (
+        "请写一个 Python 脚本：计算斐波那契数列前 20 项，并求它们的和；"
+        "运行脚本得到结果后，用一句话向非技术读者解释这个结果。",
+        "路由到 coding 角色用 execute_python 真正跑代码，再由 writing/triage 收尾。",
+    ),
+}
+DEFAULT_SCENARIO = "cagr"
+
 
 def print_roster():
-    """打印角色花名册，证明存在 ≥5 个角色、各有不同系统提示词/工具集。"""
+    """打印角色花名册，证明存在 5 个角色、各有不同系统提示词/工具集。"""
     print(f"{C.BOLD}=== 角色花名册（共 {len(ROLES)} 个专业角色）==={C.RESET}")
     for name, role in ROLES.items():
         default_tag = "（默认入口）" if name == DEFAULT_ROLE else ""
@@ -53,33 +83,127 @@ def print_roster():
     print()
 
 
+def print_scenarios():
+    """打印内置场景列表（供 --help / --list-roles 参考）。"""
+    print(f"{C.BOLD}=== 内置场景（--scenario）==={C.RESET}")
+    for key, (_task, desc) in SCENARIOS.items():
+        default_tag = "（默认）" if key == DEFAULT_SCENARIO else ""
+        print(f"{C.CYAN}• {key}{C.RESET}{default_tag} — {desc}")
+    print()
+
+
 def parse_args() -> argparse.Namespace:
-    """命令行参数——均为可选，不传时行为与原先完全一致。"""
+    """命令行参数——均为可选，不传时行为与最初版本完全一致（跑默认复合任务）。"""
     parser = argparse.ArgumentParser(
+        prog="demo.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
-            "实验 10-2 演示：多角色转换 / transfer_to_agent —— "
-            "在共享对话历史上触发 triage → research → data_analysis → writing 的自主移交链。"
-        )
+            "实验 10-2 演示：多角色转换 / transfer_to_agent。\n"
+            "在一段【共享对话历史】上，5 个专业角色通过 transfer_to_agent 自主接力，"
+            "触发形如 triage → research → data_analysis → writing 的移交链。"
+        ),
+        epilog=(
+            "示例：\n"
+            "  python demo.py                     # 跑默认场景（新能源汽车 CAGR 投资总结）\n"
+            "  python demo.py --list-roles        # 离线：只看角色/场景清单，不调用 API\n"
+            "  python demo.py --scenario coding   # 换到会路由至 coding 角色的场景\n"
+            "  python demo.py --task '帮我...'    # 自定义任务\n"
+            "  python demo.py --role research     # 从 research 角色起步\n"
+            "  python demo.py --interactive       # 交互式多轮，角色与共享历史跨轮保留\n"
+        ),
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=list(SCENARIOS.keys()),
+        default=DEFAULT_SCENARIO,
+        help=f"选择一个内置场景（默认 {DEFAULT_SCENARIO}）；被 --task 覆盖。可选：{list(SCENARIOS.keys())}",
     )
     parser.add_argument(
         "--task",
-        default=COMPOSITE_TASK,
-        help="要执行的复合任务文本（默认：新能源汽车销量 CAGR 投资总结任务，即 COMPOSITE_TASK）",
+        default=None,
+        help="自定义任务文本，覆盖 --scenario；不传则使用所选内置场景。",
+    )
+    parser.add_argument(
+        "--role",
+        "--starting-role",
+        dest="role",
+        choices=list(ROLES.keys()),
+        default=DEFAULT_ROLE,
+        help=f"指定起始角色（默认 {DEFAULT_ROLE} 前台分诊）。可选：{list(ROLES.keys())}",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="交互式多轮模式：复用同一编排器，角色与共享历史跨轮保留（Ctrl-C / 输入 exit 退出）。",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="覆盖 OPENAI_MODEL 环境变量（默认沿用环境变量，未设置则为 gpt-4o-mini）",
+        help="覆盖 OPENAI_MODEL 环境变量（默认沿用环境变量，未设置则为 gpt-4o-mini）。",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=20,
+        help="单条用户消息的最大 LLM 轮数硬上限，防止死循环（默认 20）。",
+    )
+    parser.add_argument(
+        "--list-roles",
+        action="store_true",
+        help="离线打印角色花名册与内置场景后退出，不需要 API Key（用于自检）。",
     )
     return parser.parse_args()
+
+
+def print_run_summary(orch: MultiRoleOrchestrator, final: str):
+    """打印一次运行的移交链、分工总览与最终成果。"""
+    print(f"\n{C.BOLD}================ 运行汇总 ================{C.RESET}")
+    print(f"{C.MAGENTA}自主移交链:{C.RESET} {orch.handoff_chain_str()}")
+    print(f"{C.MAGENTA}移交次数:{C.RESET} {len(orch.handoffs)}")
+    for i, h in enumerate(orch.handoffs, 1):
+        print(f"  {i}. {h.from_role} → {h.to_role}  |  reason: {h.reason}")
+    print(f"\n{C.MAGENTA}各角色分工（谁用了什么工具、谁产出最终回复）:{C.RESET}")
+    print(orch.role_work_summary())
+    print(f"\n{C.GREEN}最终成果:{C.RESET}\n{final}")
+
+
+def run_interactive(orch: MultiRoleOrchestrator):
+    """交互式多轮：同一编排器跨轮复用，共享历史与当前角色持续保留。"""
+    print(
+        f"{C.BOLD}=== 交互式多轮模式 ==={C.RESET}\n"
+        f"{C.DIM}输入你的请求后回车；输入 exit / quit 或按 Ctrl-C 退出。"
+        f"角色与对话历史会跨轮保留（共享上下文）。{C.RESET}"
+    )
+    turn = 0
+    while True:
+        try:
+            user_message = input(f"\n{C.BOLD}👤 你（当前控制权在 {orch.current_role}）> {C.RESET}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出交互模式。")
+            break
+        if not user_message:
+            continue
+        if user_message.lower() in {"exit", "quit", "q"}:
+            print("已退出交互模式。")
+            break
+        turn += 1
+        final = orch.run(user_message)
+        print_run_summary(orch, final)
 
 
 def main():
     args = parse_args()
 
+    # ---- 离线自检路径：无需 API Key ----
+    if args.list_roles:
+        print_roster()
+        print_scenarios()
+        return
+
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("错误：未找到环境变量 OPENAI_API_KEY。请先设置后重试。", file=sys.stderr)
+        print("（提示：只想看角色/场景清单可运行 `python demo.py --list-roles`，无需 Key。）", file=sys.stderr)
         sys.exit(1)
 
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -88,17 +212,27 @@ def main():
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     print_roster()
-    print(f"{C.BOLD}=== 开始执行复合任务（model={model}）==={C.RESET}")
 
-    orch = MultiRoleOrchestrator(client=client, model=model, verbose=True)
-    final = orch.run(args.task)
+    orch = MultiRoleOrchestrator(
+        client=client,
+        model=model,
+        max_steps=args.max_steps,
+        verbose=True,
+        start_role=args.role,
+    )
 
-    print(f"\n{C.BOLD}================ 运行汇总 ================{C.RESET}")
-    print(f"{C.MAGENTA}自主移交链:{C.RESET} {orch.handoff_chain_str()}")
-    print(f"{C.MAGENTA}移交次数:{C.RESET} {len(orch.handoffs)}")
-    for i, h in enumerate(orch.handoffs, 1):
-        print(f"  {i}. {h.from_role} → {h.to_role}  |  reason: {h.reason}")
-    print(f"\n{C.GREEN}最终成果:{C.RESET}\n{final}")
+    if args.interactive:
+        print(f"{C.BOLD}=== 模型 model={model}，起始角色 {args.role} ==={C.RESET}")
+        run_interactive(orch)
+        return
+
+    # ---- 脚本化：单条复合任务，端到端跑完一次 ----
+    task = args.task if args.task is not None else SCENARIOS[args.scenario][0]
+    scenario_tag = "自定义任务" if args.task is not None else f"场景 {args.scenario}"
+    print(f"{C.BOLD}=== 开始执行（{scenario_tag}，model={model}，起始角色={args.role}）==={C.RESET}")
+
+    final = orch.run(task)
+    print_run_summary(orch, final)
 
 
 if __name__ == "__main__":

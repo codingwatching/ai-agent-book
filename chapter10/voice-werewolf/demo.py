@@ -16,15 +16,33 @@
 
 用法：
     export OPENAI_API_KEY=sk-...
-    python demo.py                 # 文本模式跑完整一局（默认）
+    python demo.py                 # 文本模式跑完整一局（LLM 决策，默认）
+    python demo.py --offline       # 离线模式：规则决策，零成本、可复现，无需 API Key
     python demo.py --seed 7        # 换一局身份分布
+    python demo.py --players 9 --wolves 3   # 自定义人数与狼人数
     python demo.py --voice         # 额外把公开发言合成语音到 audio/
     python demo.py --voice --play  # 合成并播放（macOS afplay）
+    python demo.py --offline --log game.log  # 把完整对局日志另存一份到文件
 """
 
 import argparse
 import os
 import sys
+
+
+class _Tee:
+    """把写入同时分发到多个流（用于 --log：既打印到终端又落盘到文件）。"""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 try:
     from dotenv import load_dotenv
@@ -108,25 +126,48 @@ def verify_isolation(judge: Judge):
     return ok
 
 
-def main():
-    parser = argparse.ArgumentParser(description="语音狼人杀 Agent 系统 demo")
-    parser.add_argument("--seed", type=int, default=42, help="随机种子（决定身份分布，可复现）")
-    parser.add_argument("--voice", action="store_true", help="用 OpenAI tts-1 把公开发言合成语音")
-    parser.add_argument("--play", action="store_true", help="合成后播放（macOS afplay）")
-    parser.add_argument("--model", type=str, default=None, help="覆盖模型（默认 gpt-4o-mini）")
-    args = parser.parse_args()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="实验 10-8：语音狼人杀 Agent 系统 —— 法官编排 + 信息权限控制 + 多 Agent。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  python demo.py                 文本模式跑完整一局（LLM 决策，需 API Key）\n"
+            "  python demo.py --offline       离线规则决策，零成本、可复现，无需 API Key\n"
+            "  python demo.py --players 9 --wolves 3   自定义人数与狼人数\n"
+            "  python demo.py --voice --play  额外合成并播放公开发言（需 API Key）\n"))
+    parser.add_argument("--offline", "--mock", dest="offline", action="store_true",
+                        help="离线模式：用规则策略代替 LLM，无需 API Key，零成本且可复现")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="随机种子（决定身份分布与离线决策，可复现，默认 42）")
+    parser.add_argument("--players", type=int, default=7,
+                        help="玩家总数（默认 7）")
+    parser.add_argument("--wolves", type=int, default=None,
+                        help="狼人数量（默认按玩家总数自动推导：7 人为 2 狼）")
+    parser.add_argument("--max-rounds", type=int, default=6, dest="max_rounds",
+                        help="昼夜循环的最大回合数上限（默认 6）")
+    parser.add_argument("--model", type=str, default=None,
+                        help="覆盖 LLM 模型（默认 gpt-4o-mini，仅在线模式有效）")
+    parser.add_argument("--voice", action="store_true",
+                        help="用 OpenAI tts-1 把公开发言合成语音（需 API Key；默认关，即纯文本模式）")
+    parser.add_argument("--play", action="store_true",
+                        help="合成语音后立即播放（macOS afplay；需配合 --voice）")
+    parser.add_argument("--log", type=str, default=None, metavar="PATH",
+                        help="把完整对局日志（含审计表）另存一份到指定文件")
+    return parser
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("错误：未设置 OPENAI_API_KEY。请先 export OPENAI_API_KEY=sk-...（见 env.example）")
-        sys.exit(1)
+
+def run_game(args):
     if args.model:
         os.environ["OPENAI_MODEL"] = args.model
 
+    mode = "离线（规则决策）" if args.offline else "在线（LLM 决策）"
+    roles_note = "" if args.wolves is None else f"（狼人数={args.wolves}）"
     print("=" * 78)
     print("实验 10-8：语音狼人杀 Agent 系统")
-    print(f"模型：{os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')} | 种子：{args.seed} | "
-          f"语音：{'开' if args.voice else '关（默认文本模式）'}")
-    print("配置：7 人局 = 2 狼人 + 1 预言家 + 1 女巫 + 3 村民")
+    print(f"模式：{mode} | 模型：{os.environ.get('OPENAI_MODEL', 'gpt-4o-mini') if not args.offline else '—'} | "
+          f"种子：{args.seed} | 语音：{'开' if args.voice else '关（文本模式）'}")
+    print(f"配置：{args.players} 人局{roles_note} | 最大回合：{args.max_rounds}")
     print("=" * 78)
 
     tts = None
@@ -134,15 +175,44 @@ def main():
         from werewolf.tts import TTS
         tts = TTS(os.path.join(os.path.dirname(__file__), "audio"), play=args.play)
 
-    players = create_players(seed=args.seed)
-    judge = Judge(players, seed=args.seed, tts=tts)
+    players = create_players(seed=args.seed, players=args.players,
+                             wolves=args.wolves, offline=args.offline)
+    judge = Judge(players, seed=args.seed, tts=tts, max_rounds=args.max_rounds)
     winner = judge.run()
 
     # 打印信息可见性审计表 + 自动校验
     judge.audit.print_table(judge.names)
-    verify_isolation(judge)
+    ok = verify_isolation(judge)
 
     print(f"\n最终结果：{winner.value} 获胜。")
+    return ok
+
+
+def main():
+    args = build_parser().parse_args()
+
+    # 在线模式（LLM 决策 / 语音合成）才需要 API Key；离线模式不需要。
+    if (not args.offline or args.voice) and not os.environ.get("OPENAI_API_KEY"):
+        need = "语音合成（--voice）" if args.offline else "LLM 决策"
+        print(f"错误：{need} 需要 OPENAI_API_KEY。请先 export OPENAI_API_KEY=sk-...（见 env.example），"
+              f"或改用离线模式：python demo.py --offline")
+        sys.exit(1)
+
+    log_file = None
+    orig_stdout = sys.stdout
+    if args.log:
+        log_file = open(args.log, "w", encoding="utf-8")
+        sys.stdout = _Tee(orig_stdout, log_file)
+    try:
+        run_game(args)
+    except ValueError as e:
+        print(f"错误：{e}")
+        sys.exit(2)
+    finally:
+        if log_file:
+            sys.stdout = orig_stdout
+            log_file.close()
+            print(f"（完整对局日志已保存到 {args.log}）")
 
 
 if __name__ == "__main__":

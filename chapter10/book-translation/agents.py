@@ -144,27 +144,42 @@ EDITORIAL_MANDATE = {
 }
 
 
-TRANSLATION_GUIDE = (
-    "翻译指南：面向中文技术读者，语言流畅自然；保留 Markdown 结构；"
-    "代码块内的代码原样保留、不翻译（可保留英文注释）；"
-    "术语表中出现的术语必须严格使用规定译法；遇到术语表之外的新术语，"
-    "先给出你推断的译法，并在其后紧跟标记 [待审] 提示人工复核。"
-)
+def translation_guide(target_lang="中文"):
+    """按目标语言生成翻译指南。默认中文，保持与旧行为一致。"""
+    return (
+        f"翻译指南：面向{target_lang}技术读者，语言流畅自然；保留 Markdown 结构；"
+        "代码块内的代码原样保留、不翻译（可保留英文注释）；"
+        "术语表中出现的术语必须严格使用规定译法；遇到术语表之外的新术语，"
+        "先给出你推断的译法，并在其后紧跟标记 [待审] 提示人工复核。"
+    )
 
 
-def glossary_agent(client, tracker, book_text):
+# 向后兼容：模块级默认（英文→中文）翻译指南，供 Manager 上下文展示等引用。
+TRANSLATION_GUIDE = translation_guide("中文")
+
+
+# Manager 的固定执行计划（供实际运行与 --dry-run 的 Agent 图共用，避免两处漂移）。
+ORCHESTRATION_PLAN = [
+    "1. 调用 Glossary Agent 生成术语表并落盘",
+    "2. 逐章调用 Translation Agent（各自独立上下文，共享术语表文件）",
+    "3. 调用 Proofreading Agent 做一致性审校并落盘报告",
+    "4. 依据报告决定是否发回个别章节修订",
+]
+
+
+def glossary_agent(client, tracker, book_text, source_lang="英文", target_lang="中文"):
     """
     Glossary Agent：读全书内容，识别反复出现的专业术语，
     输出结构化术语对照表（JSON）。独立上下文，产出后即可释放。
     """
     system = (
-        "你是术语抽取专家。阅读整本技术书，找出反复出现的专业术语，"
-        "为每个术语给出统一的中文译法。只输出 JSON。"
+        f"你是术语抽取专家。阅读整本{source_lang}技术书，找出反复出现的专业术语，"
+        f"为每个术语给出统一的{target_lang}译法。只输出 JSON。"
     )
     user = (
         "请阅读下面全书内容，抽取 6-10 个反复出现的核心专业术语，"
         "输出 JSON，格式为："
-        '{"glossary": [{"en": "英文术语", "zh": "中文译法", '
+        f'{{"glossary": [{{"en": "{source_lang}术语", "zh": "{target_lang}译法", '
         '"pos": "词性", "context": "该术语在书中的语境说明"}]}。\n\n'
         "全书内容如下：\n\n" + book_text
     )
@@ -179,9 +194,10 @@ def glossary_agent(client, tracker, book_text):
     return data.get("glossary", [])
 
 
-def translation_agent(client, tracker, chapter_text, glossary, chapter_name, feedback=None):
+def translation_agent(client, tracker, chapter_text, glossary, chapter_name,
+                      feedback=None, source_lang="英文", target_lang="中文"):
     """
-    Translation Agent：接收「当前章节 + 术语表 + 翻译指南」，翻成流畅中文。
+    Translation Agent：接收「当前章节 + 术语表 + 翻译指南」，翻成流畅译文。
     每个实例都是独立上下文（只看到自己这一章 + 术语表，不看到别的章节译文）。
 
     feedback：可选，Manager 依据审校报告发回的针对本章的修订意见。
@@ -189,16 +205,16 @@ def translation_agent(client, tracker, chapter_text, glossary, chapter_name, fee
     glossary_lines = "\n".join(
         f'- {g["en"]} → {g["zh"]}（{g.get("pos","")}）' for g in glossary
     )
-    system = "你是专业技术翻译。把英文章节翻译为流畅、准确的中文。"
+    system = f"你是专业技术翻译。把{source_lang}章节翻译为流畅、准确的{target_lang}。"
     user = (
-        f"{TRANSLATION_GUIDE}\n\n"
+        f"{translation_guide(target_lang)}\n\n"
         f"【术语表（必须严格遵守）】\n{glossary_lines}\n\n"
     )
     if feedback:
         user += f"【本章修订意见（请据此修改）】\n{feedback}\n\n"
     user += (
         f"【待翻译章节：{chapter_name}】\n{chapter_text}\n\n"
-        "请直接输出该章节的中文译文（Markdown），不要额外解释。"
+        f"请直接输出该章节的{target_lang}译文（Markdown），不要额外解释。"
     )
     messages = [
         {"role": "system", "content": system},
@@ -208,7 +224,7 @@ def translation_agent(client, tracker, chapter_text, glossary, chapter_name, fee
     return llm_chat(client, tracker, "Translation", messages, note=note)
 
 
-def proofreading_agent(client, tracker, translations, glossary):
+def proofreading_agent(client, tracker, translations, glossary, target_lang="中文"):
     """
     Proofreading Agent：接收所有译文 + 术语表，做一致性检查
     （术语是否统一、前后是否矛盾、是否流畅），输出结构化审校报告（JSON）。
@@ -220,7 +236,7 @@ def proofreading_agent(client, tracker, translations, glossary):
         f"===== {name} =====\n{text}" for name, text in translations.items()
     )
     system = (
-        "你是资深审校。检查多章译文的术语一致性、前后一致性与流畅性。"
+        f"你是资深审校。检查多章{target_lang}译文的术语一致性、前后一致性与流畅性。"
         "只输出 JSON。"
     )
     user = (
@@ -270,27 +286,30 @@ def manager_decision(client, tracker, task, file_index, report):
 # ============================================================================
 # 运行方式一：管理者模式（Orchestration）
 # ============================================================================
-def run_orchestration(chapters, out_dir):
+def run_orchestration(chapters, out_dir, *, source_lang="英文", target_lang="中文",
+                      enable_glossary=True, enable_proofreading=True, trace=None):
     """
-    chapters：{chapter_name: 英文原文} 的有序字典
+    chapters：{chapter_name: 原文} 的有序字典
     out_dir：产物目录（术语表、各章译文、审校报告都写到这里）
+
+    可选参数：
+      source_lang / target_lang：源语言 / 目标语言（默认 英文 → 中文，与旧行为一致）。
+      enable_glossary：是否启用 Glossary Agent 抽取术语表（关闭后仅保留编辑部指定术语）。
+      enable_proofreading：是否启用 Proofreading Agent + Manager 修订闭环。
+      trace：可选回调 trace(str)，用于打印四 Agent 协作的实时轨迹。
 
     返回：metrics 字典，含 tracker、manager 上下文峰值、译文映射等。
     """
     os.makedirs(out_dir, exist_ok=True)
     client = get_client()
     tracker = TokenTracker()
+    emit = trace if callable(trace) else (lambda *a, **k: None)
 
     # ---- Manager 的上下文：只保存这些“轻量”信息，绝不含完整译文 ----
     manager_context = {
-        "task": "把一本英文技术小书翻译成流畅中文，保证术语全书一致。",
-        "guide": TRANSLATION_GUIDE,
-        "plan": [
-            "1. 调用 Glossary Agent 生成术语表并落盘",
-            "2. 逐章调用 Translation Agent（各自独立上下文，共享术语表文件）",
-            "3. 调用 Proofreading Agent 做一致性审校并落盘报告",
-            "4. 依据报告决定是否发回个别章节修订",
-        ],
+        "task": f"把一本{source_lang}技术小书翻译成流畅{target_lang}，保证术语全书一致。",
+        "guide": translation_guide(target_lang),
+        "plan": list(ORCHESTRATION_PLAN),
         "call_log": [],       # 各 Agent 调用记录（只记摘要，不记正文）
         "file_index": {},     # 文件索引：只存路径
         "progress": {},       # 进度状态
@@ -317,10 +336,18 @@ def run_orchestration(chapters, out_dir):
         snapshot_manager()
 
     snapshot_manager()
+    emit("Manager：制定计划并调度四个专职 Agent（各自独立上下文）")
+    for step in manager_context["plan"]:
+        emit(f"    计划 {step}")
 
     # ---- 步骤 1：Glossary Agent（独立上下文，读全书；产出后释放）----
     book_text = "\n\n".join(f"# {n}\n{t}" for n, t in chapters.items())
-    glossary = glossary_agent(client, tracker, book_text)
+    if enable_glossary:
+        emit(f"Manager → Glossary Agent：读全书（{len(chapters)} 章）抽取共享术语表")
+        glossary = glossary_agent(client, tracker, book_text, source_lang, target_lang)
+    else:
+        emit("Manager：已跳过 Glossary Agent（--no-glossary），仅保留编辑部指定术语")
+        glossary = []
     # Manager 把“编辑部指定术语”强制写入术语表（覆盖或新增），作为全书统一契约。
     for g in glossary:
         en = g["en"].strip().lower()
@@ -335,14 +362,25 @@ def run_orchestration(chapters, out_dir):
         json.dump(glossary, f, ensure_ascii=False, indent=2)
     # Manager 只在文件索引里记路径；术语表正文留在文件系统，不进 Manager 上下文
     manager_context["file_index"]["glossary"] = glossary_path
-    last = tracker.calls[-1]
+    # 仅在真正调用了 Glossary Agent 时才有 LLM usage 可记账；--no-glossary 时无调用。
+    g_prompt, g_completion = (
+        (tracker.calls[-1]["prompt_tokens"], tracker.calls[-1]["completion_tokens"])
+        if enable_glossary and tracker.calls else (0, 0)
+    )
     log_call("Glossary", f"抽取 {len(glossary)} 个术语", glossary_path,
-             last["prompt_tokens"], last["completion_tokens"])
+             g_prompt, g_completion)
+    if enable_glossary:
+        emit(f"Glossary Agent ✓：确定 {len(glossary)} 个术语 → {os.path.basename(glossary_path)}"
+             f"（Manager 只记路径，术语表正文留在文件系统）")
+    else:
+        emit(f"Manager：写入 {len(glossary)} 个编辑部指定术语 → {os.path.basename(glossary_path)}")
 
     # ---- 步骤 2：逐章 Translation Agent（每章一个独立上下文实例）----
     translations = {}
     for name, text in chapters.items():
-        zh = translation_agent(client, tracker, text, glossary, name)
+        emit(f"Manager → Translation Agent：翻译《{name}》（独立上下文，仅见本章 + 术语表）")
+        zh = translation_agent(client, tracker, text, glossary, name,
+                               source_lang=source_lang, target_lang=target_lang)
         # 文件名如 chapter1_zh.md
         base = _slug(name)
         out_file = os.path.join(out_dir, f"{base}_zh.md")
@@ -354,9 +392,28 @@ def run_orchestration(chapters, out_dir):
         last = tracker.calls[-1]
         log_call("Translation", f"翻译 {name}", out_file,
                  last["prompt_tokens"], last["completion_tokens"])
+        emit(f"Translation Agent ✓：{os.path.basename(out_file)}"
+             f"（上下文 {last['prompt_tokens']} tok，译文落盘不回传 Manager）")
 
     # ---- 步骤 3：Proofreading Agent（读所有译文 + 术语表，独立上下文）----
-    report = proofreading_agent(client, tracker, translations, glossary)
+    if not enable_proofreading:
+        emit("Manager：已跳过 Proofreading Agent 与修订闭环（--no-proofreading）")
+        report = {"issues": [], "chapters_need_revision": [],
+                  "summary": "（已跳过审校）"}
+        snapshot_manager()
+        return {
+            "mode": "orchestration",
+            "tracker": tracker,
+            "manager_context_peak": manager_peak,
+            "manager_context_final": manager_context,
+            "glossary": glossary,
+            "translations": translations,
+            "report": report,
+            "out_dir": out_dir,
+        }
+
+    emit("Manager → Proofreading Agent：读全部译文 + 术语表做一致性/流畅性审校")
+    report = proofreading_agent(client, tracker, translations, glossary, target_lang)
     report_path = os.path.join(out_dir, "proofreading_report.json")
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
@@ -364,6 +421,8 @@ def run_orchestration(chapters, out_dir):
     last = tracker.calls[-1]
     log_call("Proofreading", "一致性审校", report_path,
              last["prompt_tokens"], last["completion_tokens"])
+    emit(f"Proofreading Agent ✓：{len(report.get('issues', []))} 处问题 → "
+         f"{os.path.basename(report_path)}")
 
     # ---- 步骤 4：Manager 决策 + 至多一轮修订 ----
     # Manager 只把“文件索引 + 报告摘要”这类小上下文发给模型做决策
@@ -375,11 +434,13 @@ def run_orchestration(chapters, out_dir):
     manager_context["progress"]["proofread"] = "done"
     snapshot_manager()
 
+    emit("Manager：读审校报告摘要（不读正文）→ 决策哪些章节需发回修订")
     decision = manager_decision(
         client, tracker, manager_context["task"],
         manager_context["file_index"], report_summary
     )
     revise = decision.get("revise", [])
+    emit(f"Manager 决策 ✓：需修订章节 {revise or '无'}")
 
     for name in revise:
         if name not in chapters:
@@ -389,7 +450,9 @@ def run_orchestration(chapters, out_dir):
             i.get("detail", "") for i in report.get("issues", [])
             if i.get("chapter") == name
         ) or "请根据术语表统一术语并提升流畅性。"
-        zh = translation_agent(client, tracker, chapters[name], glossary, name, feedback=fb)
+        emit(f"Manager → Translation Agent：修订《{name}》（附审校意见）")
+        zh = translation_agent(client, tracker, chapters[name], glossary, name,
+                               feedback=fb, source_lang=source_lang, target_lang=target_lang)
         base = _slug(name)
         out_file = os.path.join(out_dir, f"{base}_zh.md")
         with open(out_file, "w", encoding="utf-8") as f:
@@ -401,6 +464,7 @@ def run_orchestration(chapters, out_dir):
                  last["prompt_tokens"], last["completion_tokens"])
 
     snapshot_manager()
+    emit(f"Manager：全部完成，产物目录 {out_dir}")
 
     return {
         "mode": "orchestration",
@@ -417,7 +481,7 @@ def run_orchestration(chapters, out_dir):
 # ============================================================================
 # 运行方式二：单 Agent 模式（对照组）
 # ============================================================================
-def run_single_agent(chapters, out_dir):
+def run_single_agent(chapters, out_dir, *, source_lang="英文", target_lang="中文"):
     """
     朴素基线：一个 Agent 在同一条不断增长的对话里，先粗读全书，
     再逐章翻译。没有独立的术语表工具来“钉死”术语，且上下文随章节累积。
@@ -431,8 +495,8 @@ def run_single_agent(chapters, out_dir):
     tracker = TokenTracker()
 
     system = (
-        "你是专业技术翻译。我会逐章给你一本英文技术书，请把每一章翻译成"
-        "流畅、准确的中文。保留 Markdown 结构；代码块内的代码原样保留、不翻译。"
+        f"你是专业技术翻译。我会逐章给你一本{source_lang}技术书，请把每一章翻译成"
+        f"流畅、准确的{target_lang}。保留 Markdown 结构；代码块内的代码原样保留、不翻译。"
     )
     # 单 Agent 的“主上下文”：一条持续增长的对话
     messages = [{"role": "system", "content": system}]

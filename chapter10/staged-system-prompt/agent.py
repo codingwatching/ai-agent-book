@@ -84,9 +84,60 @@ STAGE_ROLE = {
     "review": "代码审查员",
 }
 
+# 阶段的线性顺序与打印标题
+STAGE_ORDER = ["requirements", "implementation", "review"]
+STAGE_TITLE = {
+    "requirements": "阶段1 需求澄清",
+    "implementation": "阶段2 代码实现",
+    "review": "阶段3 代码审查",
+}
+
+# 从 requirements 之后的阶段起步时，用来预置的“已确认需求”。
+# 取值与 simulated_user.py 中模拟用户会给出的答案一致，因此这是对
+# 需求澄清阶段产物的忠实复现，而非凭空捏造，方便单独调试后两个阶段。
+CANONICAL_REQUIREMENTS: Dict[str, str] = {
+    "file_types": "图片(jpg/png/gif)、文档(pdf/doc/txt)、音频(mp3/wav)、"
+                  "视频(mp4/mov)、压缩包(zip/rar)，其余归 Others",
+    "recursive": "不递归，只整理下载文件夹当前这一层，忽略已有子文件夹",
+    "naming": "保留原文件名；同名冲突时加 _1/_2 后缀避免覆盖",
+    "move_or_copy": "移动（move），整理完原位置不再保留这些文件",
+    "destination": "在下载文件夹内按类别建子目录"
+                   "（Images/Documents/Audio/Video/Archives/Others）；"
+                   "根路径用命令行参数传入，默认 ~/Downloads",
+}
+
+
+def stage_overview() -> str:
+    """离线打印三阶段总览（角色 / 系统提示词 / 工具集 / 转换信号），无需 API Key。"""
+    lines: List[str] = ["阶段化系统提示词 · 三阶段角色切换总览（离线，无需 API Key）"]
+    for stage in STAGE_ORDER:
+        tool_names = [t["function"]["name"] for t in STAGE_TOOLS[stage]]
+        transitions = [n for n in tool_names if n in T_TRANSITION_TOOLS]
+        normal = [n for n in tool_names if n not in T_TRANSITION_TOOLS]
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append(f"{STAGE_TITLE[stage]}  |  角色：{STAGE_ROLE[stage]}")
+        lines.append("=" * 70)
+        lines.append("系统提示词：")
+        lines.append(STAGE_PROMPTS[stage])
+        lines.append(f"工作工具：{normal}")
+        lines.append(f"阶段转换信号工具：{transitions}")
+    lines.append("")
+    lines.append("阶段转换关系：")
+    lines.append("  requirements  --complete_requirements_analysis-->  implementation")
+    lines.append("  implementation  --submit_for_review-->  review")
+    lines.append("  review  --request_revision-->  implementation  （审查不通过，回退重写）")
+    lines.append("  review  --approve_code-->  完成")
+    return "\n".join(lines)
+
 
 class StagedAgent:
-    def __init__(self, max_revisions: int = 2, verbose: bool = True) -> None:
+    def __init__(
+        self,
+        max_revisions: int = 2,
+        verbose: bool = True,
+        interactive: bool = False,
+    ) -> None:
         Config.validate()
         self.client = OpenAI(api_key=Config.API_KEY, base_url=Config.BASE_URL)
         self.model = Config.MODEL
@@ -103,6 +154,9 @@ class StagedAgent:
         self.revision_count = 0
         self.max_revisions = max_revisions
         self.verbose = verbose
+        # interactive=True 时，需求澄清阶段的问题改由真人从标准输入回答；
+        # 默认 False 走 SimulatedUser 预设答案，可无人值守跑通全流程。
+        self.interactive = interactive
 
     # --- 日志与打印 ------------------------------------------------------
     def _log(self, action: str, detail: str) -> None:
@@ -127,9 +181,14 @@ class StagedAgent:
         """执行普通工具（非阶段转换工具），返回给模型的工具结果字符串。"""
         if name == "ask_clarifying_question":
             question = args.get("question", "")
-            answer = self.sim_user.answer(question)
             self._log("提问", question)
-            self._log("模拟用户回答", answer)
+            if self.interactive:
+                answer = input(f"  [请回答需求分析师的问题] {question}\n  > ").strip()
+                answer = answer or "没有特别要求，按常识处理即可。"
+                self._log("用户回答", answer)
+            else:
+                answer = self.sim_user.answer(question)
+                self._log("模拟用户回答", answer)
             return answer
         if name == "save_requirement":
             res = self.workspace.save_requirement(args.get("key", ""), args.get("value", ""))
@@ -160,7 +219,7 @@ class StagedAgent:
         return f"未知工具：{name}"
 
     # --- 主流程 ----------------------------------------------------------
-    def run(self, user_task: str) -> None:
+    def run(self, user_task: str, start_stage: str = "requirements") -> None:
         # 用户的初始任务，作为共享上下文的第一条消息
         self.history.append({"role": "user", "content": user_task})
         self._banner(f"用户任务：{user_task}")
@@ -170,13 +229,38 @@ class StagedAgent:
         steps = 0
         done = False
 
-        self._enter_stage("requirements")
+        if start_stage == "implementation":
+            # 跳过需求澄清，直接从实现阶段起步：预置一份等价于需求澄清产物的
+            # 已确认需求，方便单独调试实现/审查两个阶段而不必每次重跑澄清对话。
+            self._seed_requirements()
+            self._enter_stage("implementation")
+        else:
+            self._enter_stage("requirements")
+
         while not done and steps < max_total_steps:
             steps += 1
             done = self._run_one_model_turn()
 
         if not done:
             self._banner("达到步数上限，演示结束（未收到 approve_code）。")
+
+    def _seed_requirements(self) -> None:
+        """从 requirements 之后的阶段起步时，预置一份已确认需求并注入交接消息。"""
+        self.workspace.requirements = dict(CANONICAL_REQUIREMENTS)
+        reqs = "\n".join(f"- {k}: {v}" for k, v in self.workspace.requirements.items())
+        self.history.append({
+            "role": "user",
+            "content": (
+                "【阶段交接】（--start-stage 跳过了需求澄清）需求分析师已确认如下需求，"
+                "请据此实现：\n" + reqs
+            ),
+        })
+        self._log_seed(reqs)
+
+    def _log_seed(self, reqs: str) -> None:
+        if self.verbose:
+            self._banner("已预置需求（跳过需求澄清阶段）")
+            print(reqs)
 
     def _enter_stage(self, stage: str) -> None:
         self.stage = stage

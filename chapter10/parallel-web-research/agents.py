@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -216,6 +217,7 @@ class Coordinator:
         """
         mode = "LLM 判断" if llm_available() else "关键词判断（离线可复现）"
         print(f"  [协调器] 判断模式：{mode}\n")
+        t0 = time.monotonic()  # 记录并行执行的墙钟起点
         await self._dispatch()
 
         # 启动所有 Worker 协程
@@ -261,6 +263,7 @@ class Coordinator:
 
         # 等待所有 Worker 协程收尾
         await asyncio.gather(*worker_tasks, return_exceptions=True)
+        elapsed = time.monotonic() - t0  # 并行执行的墙钟耗时（含收敛静默期）
         self._print_table("最终状态")
 
         return {
@@ -272,4 +275,34 @@ class Coordinator:
             "terminate_broadcasts": sum(
                 1 for e in self.bus.history if e.type == "terminate"
             ),
+            "parallel_seconds": elapsed,
         }
+
+
+# ————————————————————————— 串行基线（性能对比） —————————————————————————
+async def run_sequential(sources: List[Source], question: str) -> dict:
+    """
+    串行基线：逐个来源"抓取 + 判断"，命中即止。
+
+    用于对照并行执行的墙钟收益（对应书中实验要求"记录并对比并行/串行时间差异"）。
+    这里真实地一个接一个 ``await source.fetch()``，因此耗时是**实测**而非估算——
+    绝不伪造数据；命中判断复用与并行版本相同的 :func:`judge_answer`。
+    """
+    t0 = time.monotonic()
+    winner: Optional[str] = None
+    answer: Optional[str] = None
+    fetched = 0
+    for src in sources:
+        fetched += 1
+        text = await src.fetch()
+        ans = await judge_answer(question, text)
+        if ans:
+            winner, answer = src.name, ans
+            break
+    return {
+        "seconds": time.monotonic() - t0,
+        "winner": winner,
+        "answer": answer,
+        "fetched": fetched,
+        "total": len(sources),
+    }
