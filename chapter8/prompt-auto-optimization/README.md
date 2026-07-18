@@ -69,12 +69,29 @@ pip install -r requirements.txt
 cp env.example .env      # 填入 OPENAI_API_KEY
 python demo.py           # 完整运行：10 个用例 × 3 份 prompt
 python demo.py --quick   # 快速演示：每组只取 2 个用例，省时省钱（推荐先跑这个）
+python demo.py --help    # 查看全部命令行参数（中文说明）
+python demo.py --dry-run # 离线自检：只打印配置与选中用例，不调用任何 API
 ```
+
+命令行参数（`python demo.py --help` 可见完整中文说明）：
+
+| 参数 | 作用 | 默认 |
+| --- | --- | --- |
+| `--quick` | 每组只取 2 个用例，省时省钱 | 关闭 |
+| `--limit N` | 每组最多评测 N 个用例（覆盖 `--quick`） | 不限 |
+| `--group {holdout,boundary,both}` | 选择评测的任务集 | `both` |
+| `--rounds N` | Coding Agent 自动改写提示词的最大重试轮数 | `3` |
+| `--model NAME` | 覆盖 LLM 模型名（等价于 `LLM_MODEL`） | 见 `config.py` |
+| `--provider {openai,moonshot,ark}` | 覆盖 LLM 提供商（等价于 `LLM_PROVIDER`） | `openai` |
+| `--output PATH` | 把优化前后 + 人工对照的对比结果写成 JSON | 不写 |
+| `--dry-run` | 离线：只打印解析后的配置与用例数，不调用 API | 关闭 |
 
 默认模型 `gpt-4o-mini`（读取 `OPENAI_API_KEY`），温度 0（结果可复现）。完整运行跑
 10 个用例 × 3 份 prompt，约几十次 API 调用、数分钟；`--quick`（或 `--limit N` 指定每组
-用例数）会显著缩短耗时，用于快速验证闭环。若未设置对应 API Key，程序会打印清晰的中文
-错误提示并退出，而不是抛出堆栈。
+用例数）会显著缩短耗时，用于快速验证闭环。命令行参数优先级高于环境变量：`--model` /
+`--provider` 会覆盖 `.env` 中的 `LLM_MODEL` / `LLM_PROVIDER`。加 `--output output/run.json`
+可把对比表落盘为 JSON（`output/` 已被 `.gitignore` 忽略），便于复现与二次分析。若未设置
+对应 API Key，程序会打印清晰的中文错误提示并退出，而不是抛出堆栈。
 
 优化后的工作副本会写入 `runtime/system_prompt_working.txt`（每次运行自动重置，属生成
 工件，已被 `.gitignore` 忽略）。

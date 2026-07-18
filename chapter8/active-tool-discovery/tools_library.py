@@ -10,11 +10,12 @@
 4) 工具执行只做轻量 mock —— 本实验关心的是"能否选对工具"，不是工具真实结果。
 
 对外导出：
-- ALL_TOOLS          : List[dict]  OpenAI tools 数组（124 个）
+- ALL_TOOLS          : List[dict]  OpenAI tools 数组（126 个）
 - TOOLS_BY_NAME      : Dict[str, dict]
 - TOOL_IMPLS         : Dict[str, callable]  mock 执行函数
 - BASE_TOOL_NAMES    : 主动发现模式下 system 里保留的少量基础工具
 - GENERIC_TOOL_NAMES : 通用/兜底工具集合（用于统计"是否用通用工具替代了专用工具"）
+- select_tools       : 按 --tool-set-size 截取工具子集（演示工具集规模的影响）
 - TASKS              : List[dict]  评测任务及其判分标准
 """
 
@@ -301,6 +302,25 @@ GENERIC_TOOL_NAMES = {
     "web_search", "universal_search", "quick_answer", "google_search",
     "bing_search", "fetch_url", "scrape_webpage", "ask_knowledge_base",
 }
+
+
+def select_tools(size: int = None, tasks: "List[Dict]" = None) -> List[Dict]:
+    """按 --tool-set-size 截取一个工具子集，用于演示"工具集规模"对各策略的影响。
+
+    子集**始终**包含：基础工具、全部通用/兜底工具（诱导项）、以及所选任务判分槽位涉及的
+    专用工具；其余名额按 ALL_TOOLS 原顺序补足，直到达到 size 个。
+    size 为空或 >= 全库规模时返回全部工具（默认行为）。
+    """
+    if size is None or size >= len(ALL_TOOLS):
+        return ALL_TOOLS
+    keep = set(BASE_TOOL_NAMES) | set(GENERIC_TOOL_NAMES)
+    for task in (tasks if tasks is not None else TASKS):
+        for slot in task["required_slots"]:
+            keep.update(slot)
+    size = max(size, len(keep))
+    required = [t for t in ALL_TOOLS if t["function"]["name"] in keep]
+    others = [t for t in ALL_TOOLS if t["function"]["name"] not in keep]
+    return required + others[: size - len(required)]
 
 
 # ---------------------------------------------------------------------------

@@ -91,12 +91,45 @@ def _sloppy_tool_code(tool_name: str, library: str) -> str:
     )
 
 
+def _offline_good_tool_code(task: dict, library: str) -> str:
+    """离线模式下 strong 画像使用的高质量工具模板（有 docstring / 参数校验 / try-except），
+    无需调用 LLM，便于在没有 API Key 时演示 L1/L2/L4 三个确定性层的评分。
+
+    模板刻意做到 L3 Rubric 的四个维度都齐备，因此即使联网跑 L3 也应得高分。"""
+    top = library.split("(")[0].split(">=")[0].strip().replace("-", "_") or "requests"
+    name = task["tool_name"]
+    goal = task["goal"].replace('"', "'")
+    return (
+        f"import {top}\n\n\n"
+        f"def {name}(query: str, timeout: int = 30):\n"
+        f'    """{goal}\n\n'
+        f"    Args:\n"
+        f"        query: 目标标识（如 URL / ID / 查询串），非空字符串。\n"
+        f"        timeout: 网络请求超时时间（秒），必须为正整数。\n"
+        f"    Returns:\n"
+        f"        工具执行结果。\n"
+        f"    Raises:\n"
+        f"        ValueError: 入参非法时抛出。\n"
+        f"        RuntimeError: 底层调用失败时抛出。\n"
+        f'    """\n'
+        f"    if not isinstance(query, str) or not query.strip():\n"
+        f"        raise ValueError('query 必须为非空字符串')\n"
+        f"    if not isinstance(timeout, int) or timeout <= 0:\n"
+        f"        raise ValueError('timeout 必须为正整数')\n"
+        f"    try:\n"
+        f"        return {top}.run(query, timeout=timeout)\n"
+        f"    except Exception as exc:  # noqa: BLE001\n"
+        f"        raise RuntimeError(f'{name} 执行失败: {{exc}}') from exc\n"
+    )
+
+
 class SelfEvolutionAgent:
     """可控的自我进化 Agent。同一个 registry 在多次 run 之间共享以支持复用。"""
 
-    def __init__(self, registry: ToolRegistry, model: Optional[str] = None):
+    def __init__(self, registry: ToolRegistry, model: Optional[str] = None, offline: bool = False):
         self.registry = registry
         self.model = Config.resolve_default_model(model)
+        self.offline = offline  # True 时用离线工具模板，不调用 LLM（用于无 Key 演示确定性层）
         self._client = None  # 懒加载，只有真正需要生成工具时才建连接
 
     @property
@@ -182,7 +215,11 @@ class SelfEvolutionAgent:
 
         # 3) 创造阶段
         if profile.tool_quality == "good":
-            code = self._generate_tool_code(task, library)
+            code = (
+                _offline_good_tool_code(task, library)
+                if self.offline
+                else self._generate_tool_code(task, library)
+            )
         else:
             code = _sloppy_tool_code(tool_name, library)
         traj["steps"].append({"action": "create_tool", "name": tool_name, "code": code})

@@ -57,26 +57,69 @@ schema 见 `agent.py` 顶部注释），输出四层各自分数与总评：
 
 ```python
 from harness import FourLayerEvaluator
-evaluator = FourLayerEvaluator(judge_model="gpt-4o-mini")
+evaluator = FourLayerEvaluator(judge_model="gpt-4o-mini")          # 默认四层全跑
+# 只跑确定性层（不需要联网）：evaluator = FourLayerEvaluator(layers=("L1","L2","L4"))
 report = evaluator.evaluate(task, first_trajectory, variant_trajectory)
 print(report["layers"], report["summary"]["overall"])
 ```
+
+`layers=` 用于选择实际运行哪些层——只有 **L3** 需要联网调用 LLM，去掉 L3 即可完全离线评估。
+未选中的层记 `score=None`（N/A），总评在可用层间按权重重新归一。
 
 ## 运行
 
 ```bash
 pip install -r requirements.txt
 cp env.example .env      # 填入 OPENAI_API_KEY（默认 provider=openai, 模型 gpt-4o-mini）
-python demo.py                       # 默认：strong 跑 3 个任务 + weak 对照 1 个
+python demo.py                       # 默认：strong 跑 3 个任务 + weak 对照 1 个（联网，含 L3）
 python demo.py --quick               # 快速演示：strong / weak 各只跑 1 个任务，省时省钱
 python demo.py --tasks task-01,task-07   # 指定要评估的任务 id
-python demo.py --help                # 查看全部参数
+python demo.py --help                # 查看全部参数（中文说明）
 ```
 
-`demo.py` 会：打印数据集概览与几条不暗示工具名的任务示例 → 用 **strong** 参考 Agent 在 3 个任务上跑完
-四层验证（真实调用 LLM 生成工具并做 judge 打分）→ 用 **weak** 参考 Agent 做对照，展示四层区分度与复用差异。
+**完整参数**（`python demo.py --help`）：
 
-### 真实运行输出（节选）
+| 参数 | 作用 |
+| --- | --- |
+| `--all` | 评估全部 20 个任务（默认自动切到结果表输出，不逐条刷屏） |
+| `--tasks IDS` | 逗号分隔的任务 id，指定评估哪几条 |
+| `--quick` | strong / weak 各只跑 1 个任务 |
+| `--layers L1,L2,L4` | 选择运行哪些验证层（仅 **L3** 需联网，去掉即可离线） |
+| `--profile {strong,weak,both}` | 选择被测参考画像；缺省保留默认（strong 全部 + weak 第一个） |
+| `--offline` | 离线模式：不调用任何 LLM（strong 用离线工具模板），自动跳过 L3 |
+| `--provider {openai,moonshot,ark}` | 覆盖供应商 |
+| `--agent-model` / `--judge-model` | 覆盖造工具模型 / L3 裁判模型 |
+| `--table` | 只打印"每任务 × 每层"结果表，不打印逐任务详报 |
+| `--output PATH` | 把完整评分结果（含各层明细）写出为 JSON |
+
+`demo.py` 会：打印数据集概览与几条不暗示工具名的任务示例 → 用 **strong** 参考 Agent 跑完
+四层验证 → 用 **weak** 参考 Agent 做对照 → 最后打印一张 **每任务 × 每层结果表**，横向对比各任务在四层上的得分。
+
+### 离线运行输出（无需 API Key，`python demo.py --all --offline --profile both`）
+
+只跑三个确定性层（L1/L2/L4，L3 记 N/A），可完整复现，用来展示"每任务 × 每层"结果表与 strong/weak 区分度：
+
+```
+每任务 × 每层 结果表（N/A = 该层不适用或未选择）
+------------------------------------------------------------------------------
+任务     领域                 画像    L1     L2     L3   L4     总评
+task-01  多媒体               strong  1.000  1.000  N/A  1.000  1.000
+task-02  金融数据 / 加密货币  strong  1.000  1.000  N/A  1.000  1.000
+...
+task-10  文档处理             strong  1.000  0.750  N/A  1.000  0.917
+task-19  编码 / 二维码        strong  1.000  0.750  N/A  1.000  0.917
+...
+task-01  多媒体               weak    1.000  0.000  N/A  0.000  0.467
+task-03  科学计算             weak    1.000  0.250  N/A  0.000  0.550
+task-10  文档处理             weak    1.000  0.400  N/A  0.000  0.600
+...
+```
+
+strong 在 L2（发现）/L4（复用）上普遍满分，weak 因选了废弃/付费库且从不复用而显著更低；两者 L1 都可能为 1
+（碰巧答对）——正说明"结果正确"不足以评判自我进化能力。**L3（工具创造质量）需联网调用 LLM 裁判**，
+去掉 `--offline` 并配置 API Key 后即可补上（见下方联网输出）。
+
+### 联网运行输出（含 L3，节选）
 
 strong（好发现 + LLM 生成的高质量工具 + 复用）：
 
@@ -122,4 +165,6 @@ weak（坏发现：选了废弃库 pytube + 粗糙 stub + 从不复用）：
 - 内置的 `SelfEvolutionAgent` 是**可控参考 Agent**（mock 版），用于把四层 harness 跑通并展示 strong/weak 的区分度，
   并非真实联网的强 Agent；L1 的"碰巧答对"正是用来说明"结果正确不足以评判自我进化能力"。
 - L3 依赖 LLM-as-a-Judge，分数会随裁判模型与采样有小幅波动；L2/L4 为可解释的启发式，判据写死在 harness 中。
+- `--offline` 模式下 strong 画像用**离线工具模板**（而非真调 LLM 生成）造工具，因此 **L3 无法离线运行**（记 N/A）；
+  它用来在无 API Key 时确定性地复现 L1/L2/L4 三层与结果表。要评估真实的工具创造质量仍需联网跑 L3。
 - 数据集为 20 条教学规模样本，覆盖面广但每领域仅 1 条，重在方法论演示而非统计显著性。

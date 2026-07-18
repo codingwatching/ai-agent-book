@@ -32,7 +32,8 @@
   → web_search  找无需 key 的开源 Python 库
   → read_webpage 读 README / PyPI 文档
   → code_interpreter 在沙箱里真跑，print 出真实数据（可 pip 安装依赖）
-  → create_tool 封装为「通用、参数化」的标准工具，存入工具库
+  → create_tool 封装为「通用、参数化」的标准工具
+      └─ 存前验证：语法编译 + 用 test_args 真跑一次 run()，通过才注册入库
   → 调用新工具，用真实数据作答
 ```
 
@@ -43,18 +44,58 @@
 - 已验证真实数据却想跳过封装直接作答时，强制提醒先 `create_tool`；
 - 工具库里的工具需先经 `search_tools` 命中（或刚创建）才「解锁」为可调用——从而强制「先检索复用」的流程。
 
+还有一道**「存前验证」闸门**（对应图 8-7 流水线里的「测试」一步，也回应本章「工具质量退化」的告诫——
+坏工具会通过复用把错误传播到后续任务）：`create_tool` 在把工具落盘之前会
+
+- 先做**语法编译检查**，语法有误的代码一律挡在库外；
+- 若调用方给了 `test_args`（一组示例入参），就在沙箱里**真跑一次 `run(**test_args)`**，
+  只有成功返回结果才准入库。系统提示词要求模型造工具时一并给出 `test_args`，从而把
+  「跑不通的坏工具」挡在工具库门外，而不是等它被后续任务复用时才崩。
+
 ## 运行
 
 ```bash
 pip install -r requirements.txt
 cp env.example .env        # 填入 OPENAI_API_KEY（默认模型 gpt-4o-mini）
-python demo.py             # 跑「进化 + 复用」两个任务
+python demo.py             # 跑「进化 + 复用」两个默认任务（需 API + 联网）
 python demo.py --fresh     # 先清空 tool_library/ 再跑，重现「从零进化」（重复演示时推荐）
+python demo.py --offline   # 离线机制自检：无需 API/网络，验证进化闭环本身
 python demo.py --help      # 查看全部参数
 ```
 
+**命令行参数**（Chinese `--help`）：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--task 任务描述` | 自定义任务；可重复多次以按顺序运行多个任务。不给则跑默认的 NVDA/AAPL 两任务 |
+| `--offline` | 离线机制自检：不调用 LLM/网络，直接驱动「搜索未命中→造工具→存前验证→注册→复用」闭环 |
+| `--fresh` | 运行前清空 `tool_library/`，重现「从零进化」 |
+| `--no-create` | 禁用造工具能力（移除 `create_tool`），用于对照演示「没有进化能力时只能复用/无法完成」 |
+| `--model 模型名` | 覆盖 LLM 模型名（优先级高于 `LLM_MODEL` 环境变量） |
+| `--output 路径` | 把任务、答案、动作轨迹与复用结论写入该 JSON 文件 |
+
 > 工具库会**持久化**到 `tool_library/`。若上一轮已封装出 `get_stock_price`，再次直接运行时任务一会在第 0 步
 > 就 `search_tools` 命中并复用它，从而看不到"进化"全过程；想重现进化请加 `--fresh`。
+
+**无 API key / 无法联网时**，用 `python demo.py --offline` 做机制自检——它用一个纯离线、确定性的工具
+（计算两个日期相差的天数）跑通完整闭环：任务一 `search_tools` 未命中→`create_tool`（含存前验证）→注册→调用；
+任务二 `search_tools` 命中→**直接复用**，不再造轮子；并额外演示存前验证闸门会拒绝一个「跑不通的坏工具」入库。
+自检在临时目录里进行，**不会污染**你真实的 `tool_library/`。一次真实的离线运行输出：
+
+```
+[验证闸门] 尝试注册一个运行会崩溃的坏工具（附 test_args）...
+  结果: success=False  ->  工具注册前验证失败：run(**test_args) 没有成功返回...
+  ✅ 存前验证挡住了坏工具（未入库），符合『别把坏程序存进去』。
+[step 1] search_tools -> 命中 0 个（工具库为空，未命中）
+[step 2] create_tool(days_between) -> success=True validated=True（存前验证已真跑一次 run()）
+[step 3] days_between(...) -> {'start': '2020-01-01', 'end': '2020-03-01', 'days': 60}
+[step 1] search_tools -> 命中 1 个：['days_between']（复用！）
+[step 2] days_between(...) -> {'start': '2021-01-01', 'end': '2021-12-31', 'days': 364}
+任务一轨迹: ['search_tools', 'create_tool', 'days_between']
+任务二轨迹: ['search_tools', 'days_between']
+任务二是否复用了任务一造的工具(未重新 create_tool): 是 ✅
+存前验证闸门是否挡住了坏工具: 是 ✅
+```
 
 `demo.py` 会连续跑两个任务：
 

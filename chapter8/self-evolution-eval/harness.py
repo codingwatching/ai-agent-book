@@ -21,6 +21,9 @@ from config import Config
 # 各层在总评中的权重（若某层 N/A 则在可用层间按比例重新归一）
 LAYER_WEIGHTS = {"L1": 0.35, "L2": 0.25, "L3": 0.25, "L4": 0.15}
 
+# 全部四层，供 CLI / 上层选择使用
+ALL_LAYERS = ("L1", "L2", "L3", "L4")
+
 
 # ---------------------------------------------------------------------------
 # L1 任务正确性
@@ -215,17 +218,25 @@ def aggregate(layers: dict) -> dict:
 
 
 class FourLayerEvaluator:
-    """把四层封装到一起。variant_trajectory 用于 L4。"""
+    """把四层封装到一起。variant_trajectory 用于 L4。
 
-    def __init__(self, judge_model: Optional[str] = None):
+    layers 指定实际运行哪些层（默认四层全跑）。只有 L3 需要联网调用 LLM，
+    因此离线场景可传 layers=("L1","L2","L4") 跳过 L3——未选中的层记 N/A，不参与总评。"""
+
+    def __init__(self, judge_model: Optional[str] = None, layers=ALL_LAYERS):
         self.judge_model = judge_model or Config.JUDGE_MODEL
+        self.layers = tuple(layers)
 
     def evaluate(self, task: dict, trajectory: dict, variant_trajectory: Optional[dict] = None) -> dict:
+        skipped = {"score": None, "detail": "（本次未选择该层，记 N/A）"}
         layers = {
-            "L1": layer1_correctness(task, trajectory),
-            "L2": layer2_discovery(task, trajectory),
-            "L3": layer3_tool_quality(task, trajectory, self.judge_model),
-            "L4": layer4_reuse(task, variant_trajectory),
+            "L1": layer1_correctness(task, trajectory) if "L1" in self.layers else dict(skipped),
+            "L2": layer2_discovery(task, trajectory) if "L2" in self.layers else dict(skipped),
+            "L3": (
+                layer3_tool_quality(task, trajectory, self.judge_model)
+                if "L3" in self.layers else dict(skipped)
+            ),
+            "L4": layer4_reuse(task, variant_trajectory) if "L4" in self.layers else dict(skipped),
         }
         return {
             "task_id": task["id"],

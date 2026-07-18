@@ -76,6 +76,8 @@ web_search、read_webpage、code_interpreter、create_tool、search_tools。
    （如 get_stock_price，而不是 get_nvidia_price），description 用通用描述，方便日后复用命中。
    code 中定义 def run(**kwargs) 并 return 结构化结果。工具内部**必须真正调用**你上一步验证
    通过的那个库来现取数据。
+   调用 create_tool 时**务必带上 test_args**（一组示例入参）：系统会用它在注册前真跑一次
+   run(**test_args)「存前验证」，只有跑通才准入库——这能挡住跑不通的坏工具污染工具库。
    注意：验证通过后**必须**执行本步 create_tool 再作答，不能跳过封装直接回答。
 5. 调用你刚 create_tool 创建的那个工具，拿到**真实数据**来回答用户。
 
@@ -153,6 +155,11 @@ BASE_TOOL_SCHEMAS = [
                         "description": "该工具的参数 JSON Schema (type=object, properties, required)",
                     },
                     "code": {"type": "string", "description": "工具实现，必须包含 def run(**kwargs) 并 return 可 JSON 序列化结果"},
+                    "test_args": {
+                        "type": "object",
+                        "description": "一组用于「存前验证」的示例入参：注册前会用它真跑一次 run(**test_args)，"
+                                       "只有成功返回才准入库。强烈建议提供，以挡住跑不通的坏工具。",
+                    },
                 },
                 "required": ["name", "description", "parameters", "code"],
             },
@@ -174,10 +181,15 @@ BASE_TOOL_SCHEMAS = [
 
 
 class SelfEvolvingAgent:
-    def __init__(self, verbose: bool = True):
+    def __init__(self, verbose: bool = True, allow_create: bool = True, model: str | None = None):
         self.client, self.model = build_client()
+        if model:  # CLI/调用方可覆盖模型名（优先级高于 LLM_MODEL 环境变量）
+            self.model = model
         self.library = ToolLibrary()
         self.verbose = verbose
+        # 是否允许「自我进化」中的造工具动作。False 时移除 create_tool 能力，
+        # 用于对照演示「没有造工具能力时只能复用/无法完成」的差异。
+        self.allow_create = allow_create
         self.trajectory = []  # 记录动作轨迹，便于「证明工具复用」
         self._verified_real_data = False  # 本轮任务是否已用 code_interpreter 打印出真实数据
         self._created_tool = False         # 本轮是否创建了工具
@@ -189,6 +201,9 @@ class SelfEvolvingAgent:
     # ------------------------------------------------------------------ #
     def _tools(self):
         """暴露给模型的工具 = 五个基础工具 + 本轮已解锁（经 search_tools 命中或刚创建）的工具。"""
+        base = BASE_TOOL_SCHEMAS
+        if not self.allow_create:  # 关闭造工具能力：不把 create_tool 暴露给模型
+            base = [s for s in base if s["function"]["name"] != "create_tool"]
         dynamic = []
         for rec in self.library.list_tools():
             if rec["name"] not in self._unlocked:
@@ -203,7 +218,7 @@ class SelfEvolvingAgent:
                     },
                 }
             )
-        return BASE_TOOL_SCHEMAS + dynamic
+        return base + dynamic
 
     def _log(self, *a):
         if self.verbose:
@@ -224,6 +239,8 @@ class SelfEvolvingAgent:
                 self._verified_real_data = True
             return res
         if name == "create_tool":
+            if not self.allow_create:
+                return {"success": False, "error": "本次运行禁用了造工具能力（--no-create）。"}
             code = args.get("code", "")
             # 反幻觉守卫 1：必须先用 code_interpreter 打印出真实数据，才允许封装工具
             if not self._verified_real_data:
@@ -242,7 +259,7 @@ class SelfEvolvingAgent:
                 }
             res = self.library.create_tool(
                 args.get("name", ""), args.get("description", ""),
-                args.get("parameters", {}), code,
+                args.get("parameters", {}), code, args.get("test_args"),
             )
             if res.get("success"):
                 self._created_tool = True

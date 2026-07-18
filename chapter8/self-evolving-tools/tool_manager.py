@@ -46,18 +46,29 @@ class ToolLibrary:
         self.dir.mkdir(parents=True, exist_ok=True)
 
     # ----------------------------- create_tool ----------------------------- #
-    def create_tool(self, name: str, description: str, parameters: dict, code: str) -> dict:
+    def create_tool(self, name: str, description: str, parameters: dict, code: str,
+                    test_args: dict | None = None) -> dict:
         """
         把一个功能封装为标准工具并持久化。
 
         约定：code 里必须定义一个名为 run(**kwargs) 的函数，返回可 JSON 序列化的结果。
         parameters 为 OpenAI function-calling 风格的 JSON Schema（type=object, properties, required）。
+
+        「存前验证」闸门（对应图 8-7 流水线里的「测试」一步、以及本章「工具质量退化」告诫）：
+        - 先做**语法编译检查**，语法错误的代码一律拒绝入库；
+        - 若给了 test_args，则在沙箱里**真正执行一次 run(**test_args)**，只有成功返回结果
+          才允许注册——从而挡住「封装了却根本跑不通」的坏工具污染工具库、再被后续任务反复复用。
         """
         name = name.strip()
         if not name.isidentifier():
             return {"success": False, "error": f"invalid tool name: {name!r} (must be a valid identifier)"}
         if "def run" not in code:
             return {"success": False, "error": "tool code must define a function `def run(**kwargs)`"}
+        # 存前验证 1：语法编译检查（坏语法直接挡在库外）
+        try:
+            compile(code, f"<tool {name}>", "exec")
+        except SyntaxError as e:
+            return {"success": False, "error": f"tool code has a syntax error: {e}"}
 
         record = {
             "name": name,
@@ -65,8 +76,28 @@ class ToolLibrary:
             "parameters": normalize_schema(parameters),
             "code": code,
         }
+
+        # 存前验证 2：给了 test_args 就真跑一次 run()，跑不通就拒绝入库
+        validated = False
+        if test_args is not None:
+            val = self._run_record(record, test_args)
+            if not val.get("success"):
+                return {
+                    "success": False,
+                    "error": "工具注册前验证失败：run(**test_args) 没有成功返回。请修正代码或 test_args"
+                             "后重新提交（未通过验证的工具不会入库，以免坏工具被后续任务复用）。",
+                    "validation": val,
+                }
+            validated = True
+
         (self.dir / f"{name}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
-        return {"success": True, "message": f"tool '{name}' created and saved to tool_library/", "name": name}
+        return {
+            "success": True,
+            "message": f"tool '{name}' created and saved to tool_library/"
+                       + ("（已通过存前验证）" if validated else "（未提供 test_args，跳过运行验证）"),
+            "name": name,
+            "validated": validated,
+        }
 
     # ----------------------------- search_tools ---------------------------- #
     def search_tools(self, query: str) -> dict:
@@ -115,7 +146,13 @@ class ToolLibrary:
         rec = self.get_tool(name)
         if rec is None:
             return {"success": False, "error": f"tool '{name}' not found in library"}
+        return self._run_record(rec, arguments, timeout)
 
+    def _run_record(self, rec: dict, arguments: dict, timeout: int = 60) -> dict:
+        """按「工具记录（含 code）」在沙箱子进程里执行 run(**arguments)。
+
+        直接吃 record 而不读磁盘，因此可在工具**尚未落盘时**用于「存前验证」。
+        """
         SANDBOX_PKG_DIR.mkdir(exist_ok=True)
         driver = (
             rec["code"]

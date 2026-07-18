@@ -1,5 +1,5 @@
 """
-两种运行模式的 Agent 循环（文本/ReAct 协议）。
+三种工具发现策略的 Agent 循环（文本/ReAct 协议）。
 
 为什么用"文本注入 + 文本解析工具调用"而不是 OpenAI 原生 function calling？
 —— 本实验要复现的正是书中所述：把 120+ 工具 schema **一次性注入 system prompt（几万 token）**，
@@ -15,7 +15,11 @@
 1) run_full_injection —— 对照组（全量注入）
    system prompt 里以文本列出全部 126 个工具。injected_tokens = 该工具清单文本的 token 数。
 
-2) run_active_discovery —— 实验组（主动发现）
+2) run_retrieval_prefilter —— 对照组之二（检索预筛选）
+   按用户初始查询做**一次性**语义检索，只把 top-n 个候选工具注入 system prompt。
+   token 已大幅下降，但一次性匹配无法预见执行中才浮现的跨领域需求（书中所述局限）。
+
+3) run_active_discovery —— 实验组（主动发现）
    system prompt 只列出少量基础工具 + discover_tools 元工具。
    模型调用 discover_tools(need) 时，用嵌入相似度返回 3-5 个候选工具，其文本清单作为
    **user message** 追加进对话（保护 system 前缀 KV Cache），并更新状态栏可用工具列表。
@@ -147,9 +151,9 @@ def _run_loop(client, model, system_prompt, task_prompt, available_names,
             continue
 
         # 普通工具调用
-        called.append(name)
         if name not in available_names:
-            # 该工具当前不可用（主动发现里还没发现 / 或纯属幻觉）
+            # 该工具当前不可用（主动发现里还没发现 / 预筛选没选中 / 或纯属幻觉）——
+            # 不计入 called（未真正执行），判分因此能体现该子任务失败。
             trace.append(f"[不可用] {name}")
             hint = ("该工具当前不可用。"
                     + ("请先用 discover_tools 发现所需能力的工具。" if on_discover else
@@ -157,6 +161,7 @@ def _run_loop(client, model, system_prompt, task_prompt, available_names,
             messages.append({"role": "user", "content": hint})
             continue
 
+        called.append(name)
         impl = TOOL_IMPLS.get(name)
         result = impl(args) if impl else json.dumps({"error": f"unknown tool {name}"})
         trace.append(f"[call] {name}({json.dumps(args, ensure_ascii=False)})")
@@ -169,27 +174,63 @@ def _run_loop(client, model, system_prompt, task_prompt, available_names,
 # 对照组：全量注入
 # ---------------------------------------------------------------------------
 
-def run_full_injection(client, model, task_prompt: str) -> Dict:
-    tools_text = render_tools(ALL_TOOLS) + "\n" + FINISH_TOOL_DESC
+def run_full_injection(client, model, task_prompt: str, tools: List[Dict] = None,
+                       max_steps: int = 10) -> Dict:
+    tools = tools if tools is not None else ALL_TOOLS
+    tools_text = render_tools(tools) + "\n" + FINISH_TOOL_DESC
     injected = count_tokens(tools_text)
     system = (
-        "你是一个智能助手。下面是你可以使用的全部工具清单（共 126 个），"
+        f"你是一个智能助手。下面是你可以使用的全部工具清单（共 {len(tools)} 个），"
         "请根据任务选择最合适的工具来完成。若任务包含多个子任务，请确保每个子任务都被处理。\n\n"
         "【工具清单】\n" + tools_text + "\n\n" + _PROTOCOL
     )
-    available = set(TOOLS_BY_NAME.keys())
-    called, trace, finished = _run_loop(client, model, system, task_prompt, available)
+    available = {t["function"]["name"] for t in tools}
+    called, trace, finished = _run_loop(client, model, system, task_prompt, available,
+                                        max_steps=max_steps)
     return {"mode": "full_injection", "injected_tokens": injected,
-            "num_tools_exposed": len(ALL_TOOLS), "called": called,
+            "num_tools_exposed": len(tools), "called": called,
             "trace": trace, "finished": finished}
+
+
+# ---------------------------------------------------------------------------
+# 对照组之二：检索预筛选（书中"检索式预筛选"）
+#   —— 按用户初始查询做**一次性**语义检索，只把 top-n 个候选工具注入 system prompt。
+#      它介于"全量注入"与"主动发现"之间：token 已大幅下降，但只匹配一次，无法预见
+#      任务执行中才浮现的跨领域需求（书中所述的内在局限）——若第二个子任务所需的
+#      专用工具没被这一次检索选中，模型就无从调用它，导致该子任务失败。
+# ---------------------------------------------------------------------------
+
+def run_retrieval_prefilter(client, model, task_prompt: str, index, top_n: int = 10,
+                            tools: List[Dict] = None, max_steps: int = 10) -> Dict:
+    tools = tools if tools is not None else ALL_TOOLS
+    tbn = {t["function"]["name"]: t for t in tools}
+    hits = index.search(task_prompt, top_k=top_n)
+    picked = [name for name, _ in hits if name in tbn]
+    picked_tools = [tbn[n] for n in picked]
+    tools_text = render_tools(picked_tools) + "\n" + FINISH_TOOL_DESC
+    injected = count_tokens(tools_text)
+    system = (
+        f"你是一个智能助手。系统已根据你的任务预先检索出下列可能相关的工具（共 {len(picked_tools)} 个），"
+        "请从中选择合适的工具完成任务。若某个子任务在清单中找不到合适的工具，请如实说明。\n\n"
+        "【工具清单】\n" + tools_text + "\n\n" + _PROTOCOL
+    )
+    available = set(picked)
+    called, trace, finished = _run_loop(client, model, system, task_prompt, available,
+                                        max_steps=max_steps)
+    return {"mode": "retrieval_prefilter", "injected_tokens": injected,
+            "num_tools_exposed": len(picked_tools), "prefiltered": picked,
+            "called": called, "trace": trace, "finished": finished}
 
 
 # ---------------------------------------------------------------------------
 # 实验组：主动发现
 # ---------------------------------------------------------------------------
 
-def run_active_discovery(client, model, task_prompt: str, index, top_k=4) -> Dict:
-    base_tools = [TOOLS_BY_NAME[n] for n in BASE_TOOL_NAMES]
+def run_active_discovery(client, model, task_prompt: str, index, top_k=4,
+                         tools: List[Dict] = None, max_steps: int = 10) -> Dict:
+    tools = tools if tools is not None else ALL_TOOLS
+    tbn = {t["function"]["name"]: t for t in tools}
+    base_tools = [tbn[n] for n in BASE_TOOL_NAMES]
     base_text = (render_tools(base_tools) + "\n"
                  + render_tool(DISCOVER_TOOL) + "\n" + FINISH_TOOL_DESC)
 
@@ -204,10 +245,10 @@ def run_active_discovery(client, model, task_prompt: str, index, top_k=4) -> Dic
             if name in BASE_TOOL_NAMES:
                 continue
             names.append(name)
-            lines.append(render_tool(TOOLS_BY_NAME[name]) + f"   (相似度 {score:.3f})")
+            lines.append(render_tool(tbn[name]) + f"   (相似度 {score:.3f})")
             if name not in discovered_names:
                 discovered_names.add(name)
-                discovered_texts.append(render_tool(TOOLS_BY_NAME[name]))
+                discovered_texts.append(render_tool(tbn[name]))
         status = f"\n\n【状态栏｜当前可用工具】{sorted(available | set(names))}"
         body = ("discover_tools 匹配到以下专用工具，已加载，可直接调用：\n"
                 + "\n".join(lines) + status)
@@ -222,7 +263,8 @@ def run_active_discovery(client, model, task_prompt: str, index, top_k=4) -> Dic
         "【基础工具】\n" + base_text + "\n\n" + _PROTOCOL
     )
     called, trace, finished = _run_loop(client, model, system, task_prompt,
-                                        available, on_discover=on_discover)
+                                        available, on_discover=on_discover,
+                                        max_steps=max_steps)
 
     injected = count_tokens(base_text) + count_tokens("\n".join(discovered_texts))
     return {"mode": "active_discovery", "injected_tokens": injected,
