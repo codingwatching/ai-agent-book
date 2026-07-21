@@ -11,12 +11,12 @@
 
 ## 📖 மின்-புத்தகம்
 
-> 📥 **PDF-ஐ நேரடியாகப் பதிவிறக்கவும்** (முழு உரை, இலவசம்):
-> - **சீனம் (அசல்)**：[`深入理解-AI-Agent-李博杰-v1.2.pdf`](book/深入理解-AI-Agent-李博杰-v1.2.pdf)
-> - **பாரம்பரிய சீனம் (தைவான்)**（சமூக மொழிபெயர்ப்பு, by [@tigercosmos](https://github.com/tigercosmos)）：[`深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf`](book-zhtw/深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf)
-> - **ஆங்கிலம்**（சமூக மொழிபெயர்ப்பு, by [@nsdevaraj](https://github.com/nsdevaraj)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2.pdf`](book-en/AI-Agents-in-Depth-Bojie-Li-v1.2.pdf)
-> - **தமிழ்**（சமூக மொழிபெயர்ப்பு, by [@nsdevaraj](https://github.com/nsdevaraj)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf`](book-ta/AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf)
-> - **வியட்நாம்**（சமூக மொழிபெயர்ப்பு, by [@toanalien](https://github.com/toanalien)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf`](book-vi/AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf)
+> 📥 **PDF / EPUB நேரடி பதிவிறக்கம்** (முழு உரை, இலவசம்). இந்த இணைப்புகள் எப்போதும் `main` கிளையின் சமீபத்திய கட்டமைப்பைச் சுட்டும்; நிலையான பதிப்புகளுக்கு [Releases](https://github.com/bojieli/ai-agent-book/releases) பார்க்கவும்:
+> - **சீனம் (அசல்)**：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.epub)
+> - **பாரம்பரிய சீனம் (தைவான்)**（சமூக மொழிபெயர்ப்பு, by [@tigercosmos](https://github.com/tigercosmos)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.epub)
+> - **ஆங்கிலம்**（சமூக மொழிபெயர்ப்பு, by [@nsdevaraj](https://github.com/nsdevaraj)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.epub)
+> - **தமிழ்**（சமூக மொழிபெயர்ப்பு, by [@nsdevaraj](https://github.com/nsdevaraj)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.epub)
+> - **வியட்நாம்**（சமூக மொழிபெயர்ப்பு, by [@toanalien](https://github.com/toanalien)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.epub)
 
 சீன மூல உரை [`book/`](book/)-இல் உள்ளது; 台灣正體/ஆங்/தமிழ்/வியத் பதிப்புகள் சமூகப் பங்களிப்புகள் (சீன அசலை விடப் பின்தங்கியிருக்கலாம்), [`book-zhtw/`](book-zhtw/), [`book-en/`](book-en/), [`book-ta/`](book-ta/), [`book-vi/`](book-vi/)-இல் உள்ளன.
 

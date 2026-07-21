@@ -11,12 +11,12 @@
 
 ## 📖 E-Book
 
-> 📥 **Download PDF directly** (full text, free and open source):
-> - **Chinese (original)**: [`深入理解-AI-Agent-李博杰-v1.2.pdf`](book/深入理解-AI-Agent-李博杰-v1.2.pdf)
-> - **Traditional Chinese (Taiwan)** (community translation, by [@tigercosmos](https://github.com/tigercosmos)): [`深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf`](book-zhtw/深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf)
-> - **English** (community translation, by [@nsdevaraj](https://github.com/nsdevaraj)): [`AI-Agents-in-Depth-Bojie-Li-v1.2.pdf`](book-en/AI-Agents-in-Depth-Bojie-Li-v1.2.pdf)
-> - **Tamil** (community translation, by [@nsdevaraj](https://github.com/nsdevaraj)): [`AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf`](book-ta/AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf)
-> - **Vietnamese** (community translation, by [@toanalien](https://github.com/toanalien)): [`AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf`](book-vi/AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf)
+> 📥 **Download** (full text, free and open source). These links always point to the latest build of the `main` branch; fixed editions are on the [Releases](https://github.com/bojieli/ai-agent-book/releases) page:
+> - **Chinese (original)**: [PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.epub)
+> - **Traditional Chinese (Taiwan)** (community translation, by [@tigercosmos](https://github.com/tigercosmos)): [PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.epub)
+> - **English** (community translation, by [@nsdevaraj](https://github.com/nsdevaraj)): [PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.epub)
+> - **Tamil** (community translation, by [@nsdevaraj](https://github.com/nsdevaraj)): [PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.epub)
+> - **Vietnamese** (community translation, by [@toanalien](https://github.com/toanalien)): [PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.epub)
 
 Chinese text source is in [`book/`](book/); Traditional Chinese (Taiwan)/English/Tamil/Vietnamese versions are community contributions (may lag behind the Chinese original), located in [`book-zhtw/`](book-zhtw/), [`book-en/`](book-en/), [`book-ta/`](book-ta/), [`book-vi/`](book-vi/) respectively.
 

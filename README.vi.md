@@ -11,12 +11,12 @@
 
 ## 📖 Sách điện tử
 
-> 📥 **Tải PDF trực tiếp** (toàn bộ nội dung, mã nguồn mở miễn phí):
-> - **Bản gốc tiếng Trung**：[`深入理解-AI-Agent-李博杰-v1.2.pdf`](book/深入理解-AI-Agent-李博杰-v1.2.pdf)
-> - **Trung phồn thể (Đài Loan)**（dịch cộng đồng, by [@tigercosmos](https://github.com/tigercosmos)）：[`深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf`](book-zhtw/深入理解-AI-Agent-李博杰-v1.2-zhtw.pdf)
-> - **Tiếng Anh**（dịch cộng đồng, by [@nsdevaraj](https://github.com/nsdevaraj)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2.pdf`](book-en/AI-Agents-in-Depth-Bojie-Li-v1.2.pdf)
-> - **Tiếng Tamil**（dịch cộng đồng, by [@nsdevaraj](https://github.com/nsdevaraj)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf`](book-ta/AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf)
-> - **Tiếng Việt**（dịch cộng đồng, by [@toanalien](https://github.com/toanalien)）：[`AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf`](book-vi/AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf)
+> 📥 **Tải xuống PDF / EPUB** (toàn bộ nội dung, mã nguồn mở miễn phí). Các liên kết này luôn trỏ tới bản dựng mới nhất của nhánh `main`; bản cố định xem tại [Releases](https://github.com/bojieli/ai-agent-book/releases):
+> - **Bản gốc tiếng Trung**：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-CN.epub)
+> - **Trung phồn thể (Đài Loan)**（dịch cộng đồng, by [@tigercosmos](https://github.com/tigercosmos)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-zh-TW.epub)
+> - **Tiếng Anh**（dịch cộng đồng, by [@nsdevaraj](https://github.com/nsdevaraj)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-en.epub)
+> - **Tiếng Tamil**（dịch cộng đồng, by [@nsdevaraj](https://github.com/nsdevaraj)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-ta.epub)
+> - **Tiếng Việt**（dịch cộng đồng, by [@toanalien](https://github.com/toanalien)）：[PDF](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.pdf) · [EPUB](https://github.com/bojieli/ai-agent-book/releases/download/latest/AI-Agents-in-Depth-vi.epub)
 
 Mã nguồn tiếng Trung nằm trong [`book/`](book/); các bản Trung phồn thể (Đài Loan)/Anh/Tamil/Việt là đóng góp cộng đồng (có thể chậm hơn bản gốc), nằm trong [`book-zhtw/`](book-zhtw/), [`book-en/`](book-en/), [`book-ta/`](book-ta/), [`book-vi/`](book-vi/).
 
