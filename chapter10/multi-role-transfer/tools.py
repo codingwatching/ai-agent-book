@@ -110,7 +110,10 @@ def execute_python(code: str) -> str:
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
-            exec(code, safe_globals, {})  # noqa: S102 —— 受限命名空间下的教学示例
+            # 只传一个命名空间：globals 与 locals 若是两个不同的 dict，顶层代码会变成
+            # 「类体」语义——函数体/推导式看不到顶层赋值的变量，正常代码会报 NameError。
+            # 沙箱限制来自 safe_globals["__builtins__"]，不受影响。
+            exec(code, safe_globals)  # noqa: S102 —— 受限命名空间下的教学示例
     except Exception as exc:  # noqa: BLE001
         return f"代码执行出错：{type(exc).__name__}: {exc}\n已捕获输出：\n{buf.getvalue()}"
     out = buf.getvalue().strip()
