@@ -2,7 +2,7 @@
 
 [![Stars](https://img.shields.io/github/stars/bojieli/ai-agent-book?style=social)](https://github.com/bojieli/ai-agent-book) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../../LICENSE) [![PDF](https://img.shields.io/badge/PDF-download-success.svg)](#-e-book) [![Languages](https://img.shields.io/badge/translations-5%20languages-informational.svg)](#-e-book)
 
-**[中文](../../README.md) · [台灣正體](../zh-TW/README.md) · English ← current · [Tiếng Việt](../vi/README.md) · [தமிழ்](../ta/README.md)**
+**[中文](../../README.md) · [中文繁體](../zh-TW/README.md) · English ← current · [Tiếng Việt](../vi/README.md) · [தமிழ்](../ta/README.md)**
 
 **Agent = LLM + Context + Tools** — This book builds on this core formula across 10 chapters, taking AI Agents from principles to engineering practice. The full text, illustrations, and **88 accompanying experiments** are all open source. You are welcome to run the experiments yourself.
 
